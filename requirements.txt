@@ -1,0 +1,13 @@
+# Ops MCP Server dependencies
+# Install: pip install -r requirements.txt
+
+# Option 1: FastMCP (recommended - simpler and more compatible)
+fastmcp>=2.0.0
+
+# Option 2: Raw MCP SDK (for custom implementations)
+# mcp>=1.0.0
+# uvicorn>=0.30.0
+# starlette>=0.37.0
+
+# Common dependencies
+python-dotenv>=1.0.0
