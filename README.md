@@ -26,6 +26,11 @@ already-installed machine. Re-running one:
   hardcoded doc) — so re-running with no arguments is also how you find out
   what's already configured.
 
+A second, independent server lives in [`desktop/`](desktop/): a **desktop
+"computer use" server for Windows** (screenshots, UI Automation, clicks and
+typing on the interactive desktop). See
+[Desktop computer-use server](#desktop-computer-use-server-windows) below.
+
 ## Quick start
 
 ### Windows
@@ -160,6 +165,100 @@ the machine has no internet access for the download.
 **Git commands fail**
 
 - Ensure `git` is on `PATH`, or set the full path in `Config.GIT_PATH`
+
+## Desktop computer-use server (Windows)
+
+`desktop/desktop_server.py` is a separate MCP server that gives an AI
+assistant control of **this PC's interactive desktop**: multi-monitor
+screenshots (with change detection), the UI Automation / Win32 control tree,
+reading values, clicking, typing, dragging, scrolling and moving windows,
+designed so you can **watch it work without your mouse and its actions
+fighting each other**.
+
+It is not part of `server_new.py` because that one runs as a service
+(session 0), which has no access to the interactive desktop. The desktop
+server runs as a **scheduled task at logon, inside your own session**.
+
+### Install (normal PowerShell, no admin needed)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install_service.ps1 -Desktop
+```
+
+The installer (self-healing, safe to re-run):
+- creates/repairs `desktop\.venv` (needs Python >= 3.11 already installed;
+  nothing is installed system-wide) and installs `requirements-desktop.txt`;
+- compiles the server and runs its unit tests before touching anything;
+- generates (or keeps) an API key in your **user** environment variable
+  `DESKTOP_MCP_API_KEY`;
+- registers the scheduled task `Desktop-MCP` (at logon, your user, no stored
+  password), starts it and checks `/health`;
+- prints the key, the port, the live tool list and the command to register it
+  in Claude Code (it does not run it):
+
+```powershell
+claude mcp add-json --scope project desktop-mcp '{"type":"http","url":"http://127.0.0.1:8011/mcp","headersHelper":"powershell -NoProfile -ExecutionPolicy Bypass -File C:/path/to/ops-mcp-server/desktop/mcp_headers.ps1"}'
+```
+
+`headersHelper` runs `desktop/mcp_headers.ps1` on every connection: it reads
+the key from the user registry, so the key is never written into `.mcp.json`
+and a Claude session started before the variable existed still gets it
+(a `${DESKTOP_MCP_API_KEY}` header would expand to empty, giving HTTP 401).
+
+Options: `-DesktopPort 8011` (default), `-DesktopListenLan` (listen on the
+LAN: needs an elevated shell for the firewall rule, and the server refuses to
+listen outside 127.0.0.1 without an API key), `-DesktopRemove` (unregister).
+By default it only listens on **127.0.0.1**.
+
+### One cursor, three mechanisms
+
+Windows has a single cursor per session, so every action uses the first
+mechanism that works and **reports which one** (`mechanism`) and whether the
+real cursor moved (`cursor_moved`):
+
+1. **UI Automation** (Invoke, Value, SelectionItem, Toggle, ExpandCollapse,
+   Text, LegacyIAccessible): no cursor movement, no focus stealing;
+2. **Win32 messages** to the window (BM_CLICK, WM_SETTEXT, EM_REPLACESEL,
+   WM_CHAR, WM_KEYDOWN/UP, CB_SETCURSEL, client-coordinate mouse messages):
+   no cursor movement;
+3. **SendInput** (drawing, dragging, apps that ignore 1 and 2): moves the
+   real cursor, which is saved and restored immediately.
+
+Your mouse is never blocked by default. Optionally
+(`set_option(freeze_user_mouse=true)`, or `input.freeze_user_mouse_during_gestures`
+in the config) your physical mouse is frozen only during a SendInput gesture.
+
+### How to stop it
+
+- The on-screen **Stop** button (top centre of the active monitor; only a
+  physical click counts, and it never appears in screenshots);
+- a message to the assistant in the chat;
+- the hotkey **Ctrl+Alt+Shift+F12** (`stop_hotkey`);
+- the `pause()` / `resume()` / `status()` tools.
+
+Moving your mouse or typing does **not** stop or pause the assistant.
+
+### What you see
+
+An orange "Claude" ghost cursor animates to each target before acting, and a
+soft border marks the monitor where it is working (grey while paused). All
+overlay windows are click-through, never take focus and are excluded from
+every screen capture (`WDA_EXCLUDEFROMCAPTURE`). Colours and sizes: the
+`screen_border` tool or the `border` / `ghost` sections of the config.
+
+### Safety and configuration
+
+- **Password fields are never typed into or read.**
+- `deny_processes` (password managers, UAC, lock screen...) and
+  `deny_window_title_regex` are never controlled, not even for reading;
+  add your own (e.g. a browser window with a banking session).
+- `allow_write_processes`: `"*"` = any app not denied; list exe names to make
+  everything else read-only.
+- Every action is appended to an audit log
+  (`%LOCALAPPDATA%\desktop-mcp\audit.jsonl`).
+- Defaults are in `desktop/config.json`; put your own overrides in
+  `%LOCALAPPDATA%\desktop-mcp\config.json` (same keys, merged). No secrets in
+  either file.
 
 ## License
 

@@ -1,0 +1,11 @@
+# Desktop / computer-use MCP server (mcp_server/desktop) - Windows only.
+# Installed into mcp_server/desktop/.venv by: install_service.ps1 -Desktop
+# Kept apart from requirements.txt so Linux / service installs never pull these.
+fastmcp>=2.0.0,<3
+python-dotenv>=1.0.0
+comtypes>=1.4
+uiautomation>=2.0.20
+dxcam>=0.3.0
+mss>=10.0
+Pillow>=10.0
+numpy>=1.26
