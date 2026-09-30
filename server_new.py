@@ -65,27 +65,70 @@ class Config:
 # Helper Functions
 # =============================================================================
 
-def run_command(cmd: list[str], cwd: str = None, timeout: int = 60) -> dict:
-    """Execute a command and return result."""
+# The server runs as a service in session 0: no one can ever answer a prompt.
+# Git / Git Credential Manager must fail fast instead of waiting on an
+# invisible login window (hung 33 git processes on 2026-09-23).
+NONINTERACTIVE_ENV = {
+    "GIT_TERMINAL_PROMPT": "0",
+    "GCM_INTERACTIVE": "never",
+}
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """Kill proc AND its descendants (with shell=True, proc is only cmd.exe)."""
     try:
-        result = subprocess.run(
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                           capture_output=True, timeout=15)
+        else:
+            import signal
+            os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        proc.kill()
+
+
+def run_command(cmd: list[str], cwd: str = None, timeout: int = 60) -> dict:
+    """Execute a command and return result.
+
+    Non-interactive (stdin closed, git prompts disabled). On timeout the whole
+    process tree is killed: subprocess.run(timeout=) only kills the direct
+    child, and a surviving grandchild holding the pipes blocks forever.
+    """
+    try:
+        proc = subprocess.Popen(
             cmd,
             cwd=cwd or str(Config.PROJECT_PATH),
-            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
-            shell=True if sys.platform == "win32" else False
+            errors="replace",
+            env={**os.environ, **NONINTERACTIVE_ENV},
+            shell=True if sys.platform == "win32" else False,
+            start_new_session=sys.platform != "win32",
         )
-        return {
-            "success": result.returncode == 0,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "returncode": result.returncode
-        }
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": f"Command timed out after {timeout}s"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
+        return {
+            "success": False,
+            "error": f"Command timed out after {timeout}s (process tree killed)",
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+    return {
+        "success": proc.returncode == 0,
+        "stdout": stdout,
+        "stderr": stderr,
+        "returncode": proc.returncode
+    }
 
 
 def safe_path(path: str) -> Path:
@@ -613,9 +656,11 @@ if FASTMCP_AVAILABLE:
         result = run_command(["cmd", "/c", command], timeout=60)
 
         output = []
-        if result["stdout"]:
+        if result.get("error"):
+            output.append(f"ERROR: {result['error']}")
+        if result.get("stdout"):
             output.append(result["stdout"])
-        if result["stderr"]:
+        if result.get("stderr"):
             output.append(f"STDERR:\n{result['stderr']}")
 
         status = "Success" if result["success"] else f"Failed (code {result.get('returncode', '?')})"

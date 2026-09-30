@@ -1,0 +1,72 @@
+{
+  "_comment": "Defaults. Do NOT edit here for local tweaks: put overrides in %LOCALAPPDATA%\\desktop-mcp\\config.json (same keys, merged over these). No secrets in this file: the API key comes from the DESKTOP_MCP_API_KEY environment variable.",
+  "host": "127.0.0.1",
+  "port": 8011,
+
+  "allow_write_processes": ["*"],
+  "_allow_comment": "Processes where click/type/set_value/drag/move are allowed. \"*\" = every process not in the deny lists (the server is meant for any app). List exe names instead of \"*\" to restrict; anything not listed is then read-only (screenshot, ui_tree, read_value).",
+
+  "deny_processes": [
+    "keepass.exe", "keepassxc.exe", "1password.exe", "bitwarden.exe", "lastpass.exe",
+    "dashlane.exe", "credentialuibroker.exe", "consent.exe", "lockapp.exe", "logonui.exe"
+  ],
+  "deny_window_title_regex": ["(?i)mot de passe|password|contrase(n|ñ)a|banque|bank"],
+  "_deny_comment": "Never controlled, even for reading, even if also in the allow list. Complete it with your own (e.g. a browser with a banking session).",
+
+  "stop_hotkey": "ctrl+alt+shift+f12",
+
+  "border": {
+    "enabled": true,
+    "color": "#FF8C00",
+    "paused_color": "#9A8F7A",
+    "width_px": 16,
+    "width_mode": "physical",
+    "max_opacity": 0.65,
+    "fade_ms": 250,
+    "pulse_period_ms": 1800,
+    "pulse_min_factor": 0.55,
+    "working_linger_s": 3,
+    "idle_hide_s": 20,
+    "label": true
+  },
+
+  "ghost": {
+    "enabled": true,
+    "color": "#FF8C00",
+    "label": "Claude",
+    "anim_ms": 220,
+    "highlight_ms": 1400,
+    "trail": false,
+    "trail_length": 8
+  },
+
+  "stop_button": {
+    "enabled": true
+  },
+
+  "capture": {
+    "backend": "auto",
+    "default_format": "jpeg",
+    "jpeg_quality": 70,
+    "default_scale": 0.5,
+    "diff_threshold": 12,
+    "recent_frames_default": 0,
+    "recent_frames_fps": 8,
+    "recent_frames_window_s": 2.0,
+    "recent_frames_post_roll_s": 0.4
+  },
+
+  "input": {
+    "move_step_px": 6,
+    "move_interval_ms": 4,
+    "freeze_user_mouse_during_gestures": false,
+    "_freeze_comment": "Off by default (user preference 2026-09-23): the user keeps full control of the mouse. true = freeze the physical mouse during SendInput strokes/clicks so it cannot mix with Claude's"
+  },
+
+  "audit": {
+    "path": "%LOCALAPPDATA%\\desktop-mcp\\audit.jsonl",
+    "thumbnails": false,
+    "thumbnail_dir": "%LOCALAPPDATA%\\desktop-mcp\\audit_thumbs",
+    "thumbnail_max_px": 320
+  }
+}
