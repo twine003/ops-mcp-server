@@ -39,9 +39,13 @@ say "preflight"
 [ "$(id -u)" = 0 ] || { echo "run as root"; exit 1; }
 "$PY" -c 'import sys; assert sys.version_info >= (3, 10), sys.version'
 ip -4 addr show docker0 | grep -q '172.17.0.1/' || { echo "docker0 is not 172.17.0.1 — adjust the unit"; exit 1; }
+# A port already held by our own service (re-run / update) is fine; anything else is not.
+OWN_PID="$(systemctl show -p MainPID --value alejandro-gateway 2>/dev/null || echo 0)"
 for p in 8770 8771; do
   if ss -ltnH "sport = :$p" | grep -q .; then
-    ss -ltnpH "sport = :$p" | grep -q alejandro || { echo "port $p is taken by something else"; exit 1; }
+    if [ "${OWN_PID:-0}" = 0 ] || ! ss -ltnpH "sport = :$p" | grep -q "pid=$OWN_PID,"; then
+      echo "port $p is taken by something else"; exit 1
+    fi
   fi
 done
 "$PY" -m py_compile "$SRC_REPO"/remote_bridge/*.py
