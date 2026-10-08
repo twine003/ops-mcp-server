@@ -36,7 +36,7 @@ Política del servidor por dispositivo: `admin policy <id> [--set herramienta=ni
 
 Variables que heredan los procesos del modelo: `BRIDGE_AGENT_TOKEN`, `BRIDGE_INTERNAL_URL`.
 
-## PC — `%LOCALAPPDATA%\alejandro-connector\`
+## PC — `%USERPROFILE%\.alejandro-connector\`
 
 `config.json`:
 
