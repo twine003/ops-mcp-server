@@ -1,0 +1,41 @@
+[Unit]
+Description=Alejandro bridge gateway (Alexa + remote devices)
+Documentation=https://github.com/twine003/ops-mcp-server/tree/main/remote_bridge/docs
+# The public app binds the Docker bridge address (172.17.0.1), so docker0 must exist.
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=alejandro-gw
+Group=alejandro-gw
+WorkingDirectory=/opt/alejandro-gateway/src
+EnvironmentFile=/etc/alejandro-gateway/gateway.env
+ExecStart=/opt/alejandro-gateway/venv/bin/python -m remote_bridge.server \
+    --public-host 172.17.0.1 --public-port 8770 --internal-port 8771
+Restart=always
+RestartSec=3
+
+# Least privilege: its own user, no new privileges, read-only system, writes only its data dir.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/lib/alejandro-gateway
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Resource limits: keep the footprint small on a shared host.
+MemoryMax=200M
+CPUQuota=50%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
