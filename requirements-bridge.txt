@@ -1,0 +1,8 @@
+# Alejandro gateway (runs on the server). The Windows connector needs only
+# httpx + websockets, which the desktop venv (requirements-desktop.txt) already has.
+fastapi>=0.115,<1
+uvicorn>=0.30
+websockets>=13
+httpx>=0.27
+cryptography>=43
+certifi>=2024.2.2

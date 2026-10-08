@@ -1,0 +1,23 @@
+# Traefik (Dokploy) file provider route for the Alejandro gateway.
+# install_gateway.sh --route --domain <fqdn> renders this (replacing alejandro.example.com)
+# into /etc/dokploy/traefik/dynamic/alejandro.yml — Traefik watches the folder,
+# no restart needed. Only /bridge/, /alexa/ and /health are routed; the internal
+# API (127.0.0.1:8771) is never reachable through the proxy.
+http:
+  routers:
+    alejandro-http:
+      rule: "Host(`alejandro.example.com`)"
+      entryPoints: [web]
+      middlewares: [redirect-to-https]
+      service: alejandro-gateway
+    alejandro-https:
+      rule: "Host(`alejandro.example.com`) && (PathPrefix(`/bridge/`) || PathPrefix(`/alexa/`) || Path(`/health`))"
+      entryPoints: [websecure]
+      service: alejandro-gateway
+      tls:
+        certResolver: letsencrypt
+  services:
+    alejandro-gateway:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:8770"
