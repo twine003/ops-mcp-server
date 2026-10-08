@@ -14,7 +14,7 @@ Commands:
     python -m remote_bridge.windows_connector status
     python -m remote_bridge.windows_connector policy
 
-Files under %LOCALAPPDATA%\\alejandro-connector\\:
+Files under %USERPROFILE%\\.alejandro-connector\\:
     config.json   gateway url, device id, desktop-mcp url
     policy.json   tool -> allow | confirm | deny   (anything missing = deny)
     token.bin     device token, DPAPI-encrypted for this Windows user
@@ -53,8 +53,16 @@ RESULT_CACHE = 256
 
 
 def default_home() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
-    return Path(base) / "alejandro-connector"
+    """%USERPROFILE%\\.alejandro-connector (override: ALEJANDRO_CONNECTOR_HOME).
+
+    Not %LOCALAPPDATA%: a process started from a packaged (MSIX) app — e.g. a
+    terminal inside a desktop app — gets its AppData writes redirected to the
+    package's private LocalCache, so the scheduled task (outside the package)
+    would never see the token or config the installer wrote. The profile root
+    is not virtualised.
+    """
+    override = os.environ.get("ALEJANDRO_CONNECTOR_HOME")
+    return Path(override) if override else Path.home() / ".alejandro-connector"
 
 
 @dataclass
@@ -414,5 +422,24 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _main_logging_crashes() -> int:
+    """Under pythonw (the scheduled task) there is no stderr: a crash before the
+    log is set up would vanish. Write it to crash.log instead."""
+    try:
+        return main()
+    except SystemExit:
+        raise
+    except BaseException:
+        import traceback
+        try:
+            home = default_home()
+            home.mkdir(parents=True, exist_ok=True)
+            with (home / "crash.log").open("a", encoding="utf-8") as f:
+                f.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')}\n{traceback.format_exc()}\n")
+        except OSError:
+            pass
+        return 1
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_main_logging_crashes())

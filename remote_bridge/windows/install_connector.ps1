@@ -13,7 +13,7 @@
   .\install_connector.ps1 -SetToken          # paste the token from `admin add` (hidden input)
   .\install_connector.ps1 -Status
   .\install_connector.ps1 -Remove            # remove the task; keeps config, token, audit
-  .\install_connector.ps1 -Remove -Purge     # also delete %LOCALAPPDATA%\alejandro-connector
+  .\install_connector.ps1 -Remove -Purge     # also delete %USERPROFILE%\.alejandro-connector
 #>
 param(
   [string]$DeviceId,
@@ -33,7 +33,8 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 if (-not $VenvScripts) { $VenvScripts = Join-Path $RepoRoot "desktop\.venv\Scripts" }
 $Python   = Join-Path $VenvScripts "python.exe"
 $PythonW  = Join-Path $VenvScripts "pythonw.exe"
-$Home_    = Join-Path $env:LOCALAPPDATA "alejandro-connector"
+# Not %LOCALAPPDATA%: it is virtualised for processes started from packaged (MSIX) apps.
+$Home_    = if ($env:ALEJANDRO_CONNECTOR_HOME) { $env:ALEJANDRO_CONNECTOR_HOME } else { Join-Path $env:USERPROFILE ".alejandro-connector" }
 
 function Invoke-Connector([string[]]$Args_) {
   Push-Location $RepoRoot

@@ -4,7 +4,7 @@
 
 | Credencial | Dónde está | Qué permite | Cómo se revoca |
 |---|---|---|---|
-| Token de dispositivo | PC: `%LOCALAPPDATA%\alejandro-connector\token.bin` (DPAPI, usuario actual). Servidor: solo su SHA-256 en `devices.json` | Conectarse como ESE dispositivo | `admin revoke <id>` (corta la conexión viva en ≤5 s) o `admin rotate <id>` |
+| Token de dispositivo | PC: `%USERPROFILE%\.alejandro-connector\token.bin` (DPAPI, usuario actual). Servidor: solo su SHA-256 en `devices.json` | Conectarse como ESE dispositivo | `admin revoke <id>` (corta la conexión viva en ≤5 s) o `admin rotate <id>` |
 | `BRIDGE_MAXBOT_TOKEN` | `/etc/alejandro-gateway/gateway.env` (0640) y `.env` de la instancia de MaxBot | Eventos, **aprobar**, respuestas de Alexa | Cambiarlo en ambos archivos y reiniciar los dos servicios |
 | `BRIDGE_AGENT_TOKEN` | Igual; visible a los procesos del modelo | Listar dispositivos, **pedir** llamadas, leer estado de una aprobación | Igual |
 | Clave de desktop-mcp | Variable de usuario `DESKTOP_MCP_API_KEY` (no cambia) | Usar desktop-mcp en 127.0.0.1 | Ver README de `desktop/` |
