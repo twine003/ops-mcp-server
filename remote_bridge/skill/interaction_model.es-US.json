@@ -1,0 +1,67 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "alejandro",
+      "intents": [
+        {
+          "name": "ConsultaIntent",
+          "slots": [{ "name": "consulta", "type": "AMAZON.SearchQuery" }],
+          "samples": [
+            "pregúntale {consulta}",
+            "dime {consulta}",
+            "quiero saber {consulta}",
+            "necesito saber {consulta}",
+            "ayúdame con {consulta}",
+            "busca {consulta}",
+            "explícame {consulta}",
+            "recuérdame {consulta}",
+            "qué {consulta}",
+            "cuál {consulta}",
+            "cuándo {consulta}",
+            "cómo {consulta}",
+            "cuánto {consulta}",
+            "dónde {consulta}",
+            "por qué {consulta}",
+            "tengo una pregunta {consulta}",
+            "que me digas {consulta}"
+          ]
+        },
+        {
+          "name": "ContinuarIntent",
+          "slots": [],
+          "samples": [
+            "continúa",
+            "continua",
+            "sigue",
+            "qué pasó",
+            "ya está",
+            "ya terminaste",
+            "dime la respuesta",
+            "cuál es la respuesta",
+            "y entonces"
+          ]
+        },
+        {
+          "name": "EstadoPCIntent",
+          "slots": [],
+          "samples": [
+            "está conectada mi computadora",
+            "está prendida mi computadora",
+            "estado de mi computadora",
+            "estado de mi pc",
+            "está conectada mi pc",
+            "mi computadora está en línea"
+          ]
+        },
+        { "name": "AMAZON.YesIntent", "samples": [] },
+        { "name": "AMAZON.NoIntent", "samples": [] },
+        { "name": "AMAZON.HelpIntent", "samples": [] },
+        { "name": "AMAZON.StopIntent", "samples": [] },
+        { "name": "AMAZON.CancelIntent", "samples": [] },
+        { "name": "AMAZON.FallbackIntent", "samples": [] },
+        { "name": "AMAZON.NavigateHomeIntent", "samples": [] }
+      ],
+      "types": []
+    }
+  }
+}
