@@ -553,9 +553,12 @@ class Overlay:
         self._apply_levels()
 
     def _render_ghost(self, ring: float):
+        gcfg = self.cfg.get("ghost", {})
+        if not gcfg.get("enabled", True) or self.ghost_pos is None:
+            self.ghost_win.update(alpha=0)
+            return
         m = self._mon_at(*self.ghost_pos) or (self.monitors[0] if self.monitors else None)
         scale = m.scale if m else 1.0
-        gcfg = self.cfg.get("ghost", {})
         color = _hex(gcfg.get("color", "#FF8C00"))
         if ring > 0 or self.ghost_scale != scale:
             self.ghost_win.set_image(ghost_image(scale, color, gcfg.get("label", "Claude"), ring))
