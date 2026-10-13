@@ -27,8 +27,9 @@ class FakeMaxBot:
     """Long-polls the gateway like the MaxBot plugin and answers Alexa turns."""
 
     def __init__(self, gateway, answer="Tienes dos pendientes: **revisar** el ERP y llamar a Ana.",
-                 delay=0.1):
+                 delay=0.1, gate: threading.Event | None = None):
         self.gateway, self.answer, self.delay = gateway, answer, delay
+        self.gate = gate                # if given, answer only once it is set
         self.results = []
         self._stop = threading.Event()
         self._t = threading.Thread(target=self._run, daemon=True)
@@ -42,6 +43,8 @@ class FakeMaxBot:
                     seq = max(seq, ev["seq"])
                     if ev["type"] == "alexa_turn":
                         time.sleep(self.delay)
+                        if self.gate is not None:
+                            self.gate.wait(10)
                         r = http.post(f"/internal/v1/alexa/{ev['job_id']}/answer",
                                       json={"text": self.answer, "runner_ms": int(self.delay * 1000)})
                         self.results.append(r.json())
@@ -158,10 +161,24 @@ def test_query_answered_within_budget(gateway, pki):
 
 
 def test_slow_answer_then_continue(gateway, pki):
-    with FakeMaxBot(gateway, delay=2.0) as bot:
+    # The answer must land while "continúa" is waiting. With a fixed delay that
+    # depended on how fast the second request reached the gateway (flaky on a
+    # loaded Windows box), so MaxBot answers only once someone is listening.
+    gate = threading.Event()
+    with FakeMaxBot(gateway, delay=0.0, gate=gate) as bot:
         r = post(gateway, pki, alexa_request(intent="ConsultaIntent", slots={"consulta": "algo largo"}))
         assert "Sigo trabajando" in say(r)
         assert r.json()["response"]["shouldEndSession"] is False
+
+        def release_when_listening():
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                if any(j.waiters > 0 for j in list(gateway.gw.alexa.jobs.values())):
+                    gate.set()
+                    return
+                time.sleep(0.01)
+
+        threading.Thread(target=release_when_listening, daemon=True).start()
         r2 = post(gateway, pki, alexa_request(intent="ContinuarIntent"))
         assert "revisar el ERP" in say(r2)
         deadline = time.time() + 5

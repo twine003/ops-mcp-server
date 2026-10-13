@@ -410,7 +410,7 @@ def test_approvals_expire():
     store = ApprovalStore(ttl_seconds=0.0)
     a = store.request("pc", "desktop.screenshot", {}, "agent")
     import time
-    time.sleep(0.01)
+    time.sleep(0.05)        # > one tick of time.monotonic() on Windows (~15.6 ms)
     assert store.decide(a.id, True, "owner").status == "expired"
     assert store.consume(a.id, "pc", "desktop.screenshot", {}) is None
 
