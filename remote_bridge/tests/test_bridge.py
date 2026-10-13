@@ -432,3 +432,55 @@ def test_audit_log_never_contains_arguments(gateway, tmp_path):
     assert "hunter2" not in gw_audit and "hunter2" not in dev_audit
     assert token not in gw_audit and token not in dev_audit
     assert "secret_value" in gw_audit        # key names are kept, values are not
+
+
+# ------------------------------------------------------------------ desktop-mcp coming and going
+class FlakyDesktop(FakeDesktop):
+    """desktop-mcp that is down until `up` is set (it started after the connector)."""
+
+    def __init__(self):
+        super().__init__()
+        self.up = False
+
+    async def list_tools(self):
+        if not self.up:
+            raise ConnectionError("All connection attempts failed")
+        return self.tools
+
+
+def test_desktop_tools_are_announced_when_desktop_mcp_comes_up_later(gateway, tmp_path):
+    token = gateway.enroll()
+
+    async def scenario():
+        desktop = FlakyDesktop()
+        c = make_connector(gateway, token, tmp_path, desktop=desktop)
+        c.cfg.tools_refresh = 0.2
+        task = await connected(gateway, c)
+        tools = lambda: set(gateway.gw.hub.connections["pc-test"].tools)  # noqa: E731
+        assert tools() == {"device.ping", "device.status"}
+
+        desktop.up = True
+        assert await wait_until(lambda: "pc-test" in gateway.gw.hub.connections
+                                and "desktop.screenshot" in tools(), timeout=8), c.state
+        assert c.connections >= 2
+
+        desktop.up = False                     # it crashed: stop advertising what cannot run
+        assert await wait_until(lambda: "pc-test" in gateway.gw.hub.connections
+                                and "desktop.screenshot" not in tools(), timeout=8), c.state
+        await shutdown(c, task)
+
+    run(scenario())
+
+
+def test_unchanged_tool_set_keeps_the_session(gateway, tmp_path):
+    token = gateway.enroll()
+
+    async def scenario():
+        c = make_connector(gateway, token, tmp_path)
+        c.cfg.tools_refresh = 0.1
+        task = await connected(gateway, c)
+        await asyncio.sleep(1.0)               # ~10 refreshes, nothing changed
+        assert c.connections == 1
+        await shutdown(c, task)
+
+    run(scenario())

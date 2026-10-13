@@ -37,14 +37,17 @@ def setup_logging(name: str, log_file: Path | None = None) -> logging.Logger:
     they are redirected to the log file so print() and tracebacks don't crash.
     """
     handlers: list[logging.Handler] = []
+    stderr_is_log = False
     if log_file is not None:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
         if sys.stdout is None or sys.stderr is None:
             stream = open(log_file, "a", encoding="utf-8", buffering=1)
+            stderr_is_log = sys.stderr is None
             sys.stdout = sys.stdout or stream
             sys.stderr = sys.stderr or stream
-    if sys.stderr is not None:
+    if sys.stderr is not None and not stderr_is_log:
+        # Not when stderr IS the log file: every line would be written twice.
         handlers.append(logging.StreamHandler())
     logging.basicConfig(
         level=logging.INFO,
@@ -52,6 +55,25 @@ def setup_logging(name: str, log_file: Path | None = None) -> logging.Logger:
         handlers=handlers,
     )
     return logging.getLogger(name)
+
+
+def enable_crash_log(crash_file: Path) -> None:
+    """Dump the Python stack of every thread to crash_file on a fatal error.
+
+    A native crash (0xC0000005 inside a capture/UIA/COM call) kills the process
+    without a traceback, and under pythonw there is no console to see it: this
+    leaves at least the Python frames that were running at that moment.
+    """
+    import faulthandler
+    import time
+    try:
+        crash_file.parent.mkdir(parents=True, exist_ok=True)
+        f = open(crash_file, "a", encoding="utf-8", buffering=1)
+        f.write(f"--- pid {os.getpid()} started {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        faulthandler.enable(file=f, all_threads=True)
+    except OSError:
+        if sys.stderr is not None:
+            faulthandler.enable(all_threads=True)
 
 
 def make_auth_provider(api_key: str, logger: logging.Logger):

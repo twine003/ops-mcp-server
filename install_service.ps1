@@ -215,7 +215,11 @@ if ($Desktop -or $DesktopRemove) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $exe = if (Test-Path $VenvPythonW) { $VenvPythonW } else { $VenvPython }   # pythonw = no console window
-    $Action = New-ScheduledTaskAction -Execute $exe -Argument "`"$DesktopScript`" --port $DesktopPort --host $BindHost" -WorkingDirectory $DesktopDir
+    # The task runs supervise.py, which restarts the server whenever it exits: Task Scheduler's
+    # RestartCount only covers a task that fails to START, not a process that crashes later.
+    $Supervisor = Join-Path $PSScriptRoot "supervise.py"
+    $SupervisorLog = Join-Path $env:LOCALAPPDATA "desktop-mcp\supervisor.log"
+    $Action = New-ScheduledTaskAction -Execute $exe -Argument "`"$Supervisor`" --name desktop-mcp --log `"$SupervisorLog`" -- `"$exe`" `"$DesktopScript`" --port $DesktopPort --host $BindHost" -WorkingDirectory $DesktopDir
     $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $me
     $Principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited
     $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `

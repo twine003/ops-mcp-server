@@ -68,6 +68,7 @@ VERSION = "1.0.0"
 PROJECT_ROOT = _PKG_DIR.parent.parent
 mcp_common.load_env(PROJECT_ROOT)
 logger = mcp_common.setup_logging("desktop-mcp", DATA_DIR / "server.log")
+mcp_common.enable_crash_log(DATA_DIR / "crash.log")
 
 CFG = load_config()
 OWN_PID = os.getpid()

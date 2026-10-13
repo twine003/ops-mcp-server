@@ -72,6 +72,10 @@ class ConnectorConfig:
     desktop_url: str = "http://127.0.0.1:8011/mcp"
     max_backoff: float = 60.0
     auth_backoff: float = 300.0
+    # How often a live session re-checks desktop-mcp. If the tools it offers
+    # change (it started after us, crashed, came back), the connector reconnects
+    # so the gateway receives a fresh hello with the current list.
+    tools_refresh: float = 30.0
     home: Path = field(default_factory=default_home)
 
     @classmethod
@@ -81,7 +85,8 @@ class ConnectorConfig:
         path = home / "config.json"
         if path.exists():
             raw = json.loads(path.read_text(encoding="utf-8-sig"))   # PowerShell 5.1 writes a BOM
-            for key in ("gateway_url", "device_id", "desktop_url", "max_backoff", "auth_backoff"):
+            for key in ("gateway_url", "device_id", "desktop_url", "max_backoff", "auth_backoff",
+                        "tools_refresh"):
                 if key in raw:
                     setattr(cfg, key, raw[key])
         return cfg
@@ -99,6 +104,10 @@ def load_policy(home: Path) -> dict[str, str]:
 
 class _Stop(Exception):
     pass
+
+
+class _ToolsChanged(Exception):
+    """The local tool set changed mid-session: reconnect to announce the new one."""
 
 
 class WindowsConnector:
@@ -128,6 +137,7 @@ class WindowsConnector:
         self._inflight: set[str] = set()
         self._sem = asyncio.Semaphore(2)
         self.state: dict[str, Any] = {"connected": False}
+        self._desktop_error: str | None = None     # last desktop-mcp failure, to log transitions only
         self.connections = 0
         self._stop = asyncio.Event()
 
@@ -149,8 +159,14 @@ class WindowsConnector:
         if self.desktop is not None:
             try:
                 tools += [f"desktop.{name}" for name in await self.desktop.list_tools()]
+                if self._desktop_error is not None:
+                    log.info("desktop-mcp is back")
+                self._desktop_error = None
             except Exception as e:
-                log.warning("desktop-mcp unavailable, offering device.* only: %s", e)
+                error = f"{type(e).__name__}: {str(e)[:200]}"
+                if error != self._desktop_error:      # once per outage, not once per refresh
+                    log.warning("desktop-mcp unavailable, offering device.* only: %s", error)
+                self._desktop_error = error
         # Never advertise what the local policy denies.
         return [t for t in tools if self.policy.get(t, "deny") != "deny" and P.TOOL_RE.match(t)]
 
@@ -167,6 +183,8 @@ class WindowsConnector:
                 "python": platform.python_version(),
                 "connected_since": self.state.get("connected_since"),
                 "desktop_mcp": desktop,
+                "desktop_tools_offered": any(t.startswith("desktop.") for t in self.state.get("tools", [])),
+                "desktop_last_error": self._desktop_error,
             }
             return {"ok": True, "content": P.text_content(json.dumps(info, ensure_ascii=False))}
         return {"ok": False, "error": f"unknown builtin {tool}", "error_type": "not_found", "content": []}
@@ -288,7 +306,19 @@ class WindowsConnector:
                 await self._stop.wait()
                 raise _Stop()
 
-            runners = [asyncio.create_task(c()) for c in (heartbeat, reader, stopper)]
+            async def refresher():
+                while True:
+                    await asyncio.sleep(self.cfg.tools_refresh)
+                    current = await self.available_tools()
+                    if set(current) != set(tools):
+                        added = sorted(set(current) - set(tools))
+                        removed = sorted(set(tools) - set(current))
+                        log.info("tool set changed (+%d -%d); reconnecting to announce it",
+                                 len(added), len(removed))
+                        self.audit.write("tools_changed", added=len(added), removed=len(removed))
+                        raise _ToolsChanged()
+
+            runners = [asyncio.create_task(c()) for c in (heartbeat, reader, stopper, refresher)]
             done, pending = await asyncio.wait(runners, return_when=asyncio.FIRST_EXCEPTION)
             for t in pending:
                 t.cancel()
@@ -314,6 +344,9 @@ class WindowsConnector:
                 await self.session()
             except _Stop:
                 break
+            except _ToolsChanged:
+                backoff = 1.0
+                delay = 0.5                     # planned reconnect, not a failure
             except Exception as e:
                 code = _close_code(e)
                 reason = f"{type(e).__name__}: {str(e)[:200]}"
@@ -412,6 +445,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     _setup_logging(cfg.home, args.verbose)
+    import faulthandler
+    _crash = (cfg.home / "crash.log").open("a", encoding="utf-8", buffering=1)
+    faulthandler.enable(file=_crash, all_threads=True)    # native crashes leave no traceback otherwise
     from .desktop_client import DesktopClient
     connector = WindowsConnector(cfg, load_token(token_path), desktop=DesktopClient(cfg.desktop_url))
     log.info("alejandro-connector %s starting (device %s)", __version__, cfg.device_id)

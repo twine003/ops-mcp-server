@@ -95,7 +95,10 @@ if (-not (Test-Path (Join-Path $Home_ "token.bin"))) {
   Write-Warning "No token yet. Run: .\install_connector.ps1 -SetToken"
 }
 
-$action  = New-ScheduledTaskAction -Execute $PythonW -Argument "-m remote_bridge.windows_connector run" -WorkingDirectory $RepoRoot
+# supervise.py restarts the connector if it ever exits; Task Scheduler alone would not.
+$Supervisor = Join-Path $RepoRoot "supervise.py"
+$SupervisorLog = Join-Path $Home_ "supervisor.log"
+$action  = New-ScheduledTaskAction -Execute $PythonW -Argument "`"$Supervisor`" --name alejandro-connector --log `"$SupervisorLog`" -- `"$PythonW`" -m remote_bridge.windows_connector run" -WorkingDirectory $RepoRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
@@ -103,7 +106,7 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
   -Principal $principal -Description "Alejandro Windows Connector (outbound WSS to the gateway)" -Force | Out-Null
-Write-Host "Task $TaskName registered (at logon, user session, restart every 1 min)."
+Write-Host "Task $TaskName registered (at logon, user session, kept alive by supervise.py)."
 
 if (-not $NoStart) {
   Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
