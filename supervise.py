@@ -118,7 +118,12 @@ def supervise(cmd: list[str], *, name: str, stop: threading.Event, cwd: str | No
     while not stop.is_set():
         started = time.monotonic()
         try:
-            child = spawn(cmd, cwd=cwd, stdin=subprocess.DEVNULL)
+            # No std handles on purpose: under pythonw the child must see sys.stdout/stderr
+            # as None (as when the task launched it directly) so it redirects them to its
+            # log. Passing any of stdin/stdout/stderr makes Windows hand it the others as
+            # invalid handles; the first print (FastMCP's banner) then fails and the
+            # child exits with 120.
+            child = spawn(cmd, cwd=cwd)
         except OSError as e:
             log.error("%s: cannot start %s: %s", name, cmd[0], e)
             delay = next_delay(delay, 0)
