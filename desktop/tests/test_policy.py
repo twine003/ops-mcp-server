@@ -2,7 +2,7 @@
 
 import unittest
 
-from desktop.safety import Policy, PolicyError
+from desktop.safety import CALLOUT_TITLE, Policy, PolicyError
 
 DENY = {"deny_processes": ["keepass.exe", "consent.exe"],
         "deny_window_title_regex": ["(?i)password|banque"]}
@@ -38,3 +38,14 @@ class TestPolicy(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCalloutProtection(unittest.TestCase):
+    def test_own_bubble_is_never_readable_or_writable(self):
+        p = Policy({"allow_write_processes": ["*"], **DENY})
+        title = f"{CALLOUT_TITLE} 3"
+        self.assertTrue(p.is_denied("pythonw.exe", title))
+        self.assertFalse(p.write_allowed("pythonw.exe", title))
+        with self.assertRaises(PolicyError):
+            p.check_read("python.exe", title)
+

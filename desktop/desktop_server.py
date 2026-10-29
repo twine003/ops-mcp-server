@@ -59,6 +59,7 @@ from desktop import uia  # noqa: E402
 from desktop import windows as wins  # noqa: E402
 from desktop.monitors import (CaptureFrame, Monitor, enumerate_monitors, monitor_at,  # noqa: E402
                               monitor_for_rect, nearest_monitor, resolve_monitor, virtual_bounds)
+from desktop.callout import CalloutUI  # noqa: E402
 from desktop.overlay import Overlay  # noqa: E402
 from desktop.recorder import Recorder  # noqa: E402
 from desktop.safety import (DATA_DIR, AuditLog, Policy, PolicyError, StoppedError,  # noqa: E402
@@ -148,6 +149,7 @@ def _on_monitors_changed():
 
 OVERLAY = Overlay(CFG, STOP, on_monitors_changed=_on_monitors_changed)
 STOP.on_change(lambda paused, reason: OVERLAY.post("paused", paused=paused, reason=reason))
+CALLOUTS = CalloutUI(CFG)
 
 FRAMES: "OrderedDict[int, CaptureFrame]" = OrderedDict()
 _frame_counter = [0]
@@ -1252,6 +1254,88 @@ async def screen_border(action: str = "show", monitor: str | None = None, color:
     return {"ok": True, "overlay": OVERLAY.snapshot(), "border": CFG.get("border")}
 
 
+def _callout_wait(c, timeout: float) -> dict:
+    """Block until the user accepts / answers / closes the bubble, the stop control fires, or timeout."""
+    end = time.monotonic() + max(0.0, float(timeout))
+    while not c.done.wait(0.2):
+        if STOP.stopped:
+            c.finish("stopped")
+            CALLOUTS.close(c.id, "stopped")
+            break
+        if time.monotonic() >= end:
+            return {"ok": True, "id": c.id, "state": "pending",
+                    "hint": "still open on screen: callout_wait(id) to keep waiting, callout_close(id) to remove it"}
+    OVERLAY.release_highlight()
+    res = {"ok": True, "id": c.id, **c.result}
+    AUDIT.write({"tool": "callout_result", "id": c.id, "state": c.result.get("state"),
+                 "answer_chars": len(c.result.get("answer") or ""), "after_s": c.result.get("after_s")})
+    return res
+
+
+@mcp.tool()
+async def callout(text: str, title: str = "", x: int | None = None, y: int | None = None,
+                  rect: list[int] | None = None, element: str | None = None, ask: bool = False,
+                  button: str = "OK", step: str = "", placeholder: str = "",
+                  wait: bool = True, timeout: float = 240) -> dict:
+    """Show a comment bubble on screen for the user (guided tours, explanations, questions).
+
+    Anchor (optional, virtual px): rect [l,t,r,b] (outlined while the bubble is open), or a point
+    x,y, or a UIA element id; the ghost cursor glides there and the bubble sits beside it.
+    No anchor = centre of the primary monitor.
+    ask=True adds a text field: the user types the answer and presses Enter or the button.
+    step: small progress tag such as "2/5". One bubble at a time (a new one replaces the old one).
+    wait=True blocks until the user acts or `timeout` s pass, and returns
+      state: accepted | answered (+answer) | dismissed (the X / Esc) | replaced | stopped | pending.
+    Only the user's PHYSICAL click / keys count; Claude can neither click nor read the bubble.
+    """
+    if STOP.stopped:
+        return _err(StoppedError(f"Claude is paused ({STOP.reason})."))
+    anchor = None
+    if element:
+        try:
+            *_, tgt = _element_target(element, enumerate_monitors())
+            POLICY.check_read(tgt["process"], tgt["title"])
+        except Exception as e:  # noqa: BLE001
+            return _err(e)
+        rect = list(tgt["rect"]) if tgt.get("rect") else rect
+    if rect:
+        anchor = tuple(int(v) for v in rect)
+    elif x is not None and y is not None:
+        anchor = (int(x) - 1, int(y) - 1, int(x) + 1, int(y) + 1)
+    if anchor:
+        cx, cy = _center(anchor)
+        m = nearest_monitor(enumerate_monitors(), cx, cy)
+        OVERLAY.activity(m.device, title or "comment", "")
+        if rect:
+            OVERLAY.highlight(anchor, ms=(float(timeout) + 5) * 1000 if wait else 600_000)
+        await asyncio.to_thread(OVERLAY.ghost_move, cx, cy, True)
+    try:
+        c = await asyncio.to_thread(CALLOUTS.show, text, title, ask, button, step, anchor, placeholder)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+    AUDIT.write({"tool": "callout", "id": c.id, "ask": ask, "chars": len(text), "anchor": anchor})
+    if not wait:
+        return {"ok": True, "id": c.id, "state": "pending"}
+    return await asyncio.to_thread(_callout_wait, c, timeout)
+
+
+@mcp.tool()
+async def callout_wait(id: int, timeout: float = 240) -> dict:
+    """Keep waiting for the user's response to a bubble shown with callout()."""
+    c = CALLOUTS.get(id)
+    if c is None:
+        return {"ok": False, "error_type": "not_found", "error": f"unknown callout {id}"}
+    return await asyncio.to_thread(_callout_wait, c, timeout)
+
+
+@mcp.tool()
+async def callout_close(id: int | None = None) -> dict:
+    """Remove a bubble (or all of them) from the screen without waiting for the user."""
+    CALLOUTS.close(id, "closed")
+    OVERLAY.release_highlight()
+    return {"ok": True, "callouts": CALLOUTS.snapshot()}
+
+
 @mcp.tool()
 async def set_option(freeze_user_mouse: bool | None = None, persist: bool = False) -> dict:
     """Change runtime options. freeze_user_mouse: freeze the user's physical mouse during SendInput
@@ -1285,7 +1369,7 @@ async def status() -> dict:
                           "hotkey_error": GUARD.hotkey_error},
         "busy": bool(WORKER.busy_since), "busy_with": WORKER.current,
         "freeze_user_mouse_during_gestures": CFG.get("input", {}).get("freeze_user_mouse_during_gestures", False),
-        "overlay": OVERLAY.snapshot(), "policy": POLICY.describe(),
+        "overlay": OVERLAY.snapshot(), "callouts": CALLOUTS.snapshot(), "policy": POLICY.describe(),
         "capture_backend": WORKER.capturer.last_backend if WORKER.capturer else "",
         "audit_log": str(AUDIT.path), "recent_actions": AUDIT.tail(8),
         "dpi_awareness": DPI_MODE, "host": Config.HOST, "port": Config.PORT,
