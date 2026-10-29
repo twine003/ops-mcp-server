@@ -26,10 +26,10 @@ already-installed machine. Re-running one:
   hardcoded doc) — so re-running with no arguments is also how you find out
   what's already configured.
 
-A second, independent server lives in [`desktop/`](desktop/): a **desktop
-"computer use" server for Windows** (screenshots, UI Automation, clicks and
-typing on the interactive desktop). See
-[Desktop computer-use server](#desktop-computer-use-server-windows) below.
+On a Windows PC, `server_new.py --desktop` also serves the **desktop
+"computer use" tools** of [`desktop/`](desktop/) (screenshots, UI Automation,
+clicks and typing on the interactive desktop) — one server, one port, one key.
+See [Desktop computer-use server](#desktop-computer-use-server-windows) below.
 
 ## Quick start
 
@@ -168,16 +168,26 @@ the machine has no internet access for the download.
 
 ## Desktop computer-use server (Windows)
 
-`desktop/desktop_server.py` is a separate MCP server that gives an AI
-assistant control of **this PC's interactive desktop**: multi-monitor
+`server_new.py --desktop` mounts the tools of `desktop/` into the same
+server. They give an AI assistant control of **this PC's interactive desktop**: multi-monitor
 screenshots (with change detection), the UI Automation / Win32 control tree,
 reading values, clicking, typing, dragging, scrolling and moving windows,
 designed so you can **watch it work without your mouse and its actions
 fighting each other**.
 
-It is not part of `server_new.py` because that one runs as a service
-(session 0), which has no access to the interactive desktop. The desktop
-server runs as a **scheduled task at logon, inside your own session**.
+`--desktop` only works inside a user's session: a service runs in session
+0, which has no access to the interactive desktop (the server refuses to start
+there). So on a PC it runs as a **scheduled task at logon, inside your own
+session**. Without `--desktop` (the service on a server) nothing changes. With
+`--desktop` the server-only deployment tools (`full_deploy`, `git_pull`,
+`django_migrate`, `django_collectstatic`, `pip_install`,
+`iis_start/stop/restart`) are not offered: on a PC they would touch the local
+checkout or database by mistake. `desktop/desktop_server.py` is no longer a
+server of its own: run directly (an old task), it starts `server_new.py --desktop`.
+
+**Agents must read [`desktop/AGENT_GUIDE.md`](desktop/AGENT_GUIDE.md)**: a
+summary goes out in the server's connection instructions and the `usage_guide()`
+tool returns the full text (edit the file, no restart needed).
 
 ### Install (normal PowerShell, no admin needed)
 
@@ -191,8 +201,8 @@ The installer (self-healing, safe to re-run):
 - compiles the server and runs its unit tests before touching anything;
 - generates (or keeps) an API key in your **user** environment variable
   `DESKTOP_MCP_API_KEY`;
-- registers the scheduled task `Desktop-MCP` (at logon, your user, no stored
-  password), starts it and checks `/health`;
+- registers the scheduled task `Desktop-MCP` (`server_new.py --desktop`, at
+  logon, your user, no stored password), starts it and checks `/health`;
 - prints the key, the port, the live tool list and the command to register it
   in Claude Code (it does not run it):
 
@@ -241,7 +251,12 @@ Moving your mouse or typing does **not** stop or pause the assistant.
 ### What you see
 
 An orange "Claude" ghost cursor animates to each target before acting, and a
-soft border marks the monitor where it is working (grey while paused). All
+soft border marks the monitor where it is working (grey while paused). Both
+are **mandatory**: every desktop tool call shows them and keeps them up while
+it runs, and they fade together a few seconds after the last call; they cannot
+be hidden (`hide` is refused, `ghost.enabled` / `border.enabled` are ignored).
+`/health` reports `desktop`, `overlay_state` and `ghost_visible` without
+lighting them. All
 overlay windows are click-through, never take focus and are excluded from
 every screen capture (`WDA_EXCLUDEFROMCAPTURE`). Colours and sizes: the
 `screen_border` tool or the `border` / `ghost` sections of the config.

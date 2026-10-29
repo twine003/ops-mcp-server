@@ -8,6 +8,11 @@ with MCP clients like Claude Code.
 
 Usage:
     python server_new.py [--port 8001] [--host 0.0.0.0]
+    python server_new.py --desktop [--port 8011] [--host 127.0.0.1]
+
+--desktop: same server plus the desktop "computer use" tools (desktop/).
+Only on a user's PC, from a scheduled task at logon (install_service.ps1 -Desktop):
+a service runs in session 0, which has no desktop.
 
 Endpoints:
     /mcp - Standard MCP Streamable HTTP endpoint
@@ -39,11 +44,19 @@ try:
 except ImportError:
     pass
 
+# --desktop (or MCP_DESKTOP=1): also serve the desktop tools, see "Desktop mode" below.
+DESKTOP_REQUESTED = "--desktop" in sys.argv or os.getenv("MCP_DESKTOP", "").lower() in ("1", "true", "on")
+
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+if DESKTOP_REQUESTED:
+    # Runs under pythonw (no console): log to a file, stdout/stderr redirected there too.
+    import mcp_common
+    mcp_common.setup_logging("mcp-server", Path(os.path.expandvars(r"%LOCALAPPDATA%\desktop-mcp\server.log")))
+else:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 logger = logging.getLogger("mcp-server")
 
 
@@ -59,6 +72,40 @@ class Config:
     GIT_PATH = "git"
     IIS_APP_POOL = os.getenv("IIS_APP_POOL", "")
     IIS_SITE_NAME = os.getenv("IIS_SITE_NAME", "")
+
+
+# =============================================================================
+# Desktop mode
+# =============================================================================
+# The desktop tools (screen, UI Automation, clicks, ghost cursor, border,
+# callouts) are a FastMCP server of their own, mounted into this one. They need
+# the user's interactive session: a service (session 0) never gets them.
+
+# Server-only tools, not exposed on a user's PC: there they would pull, migrate
+# or deploy the local checkout / database by mistake.
+SERVER_ONLY_TOOLS = ("full_deploy", "git_pull", "django_migrate", "django_collectstatic",
+                     "pip_install", "iis_start", "iis_stop", "iis_restart")
+
+
+def _interactive_session() -> bool:
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    sid = ctypes.c_ulong()
+    ok = ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(sid))
+    return bool(ok) and sid.value != 0
+
+
+desktop_srv = None
+if DESKTOP_REQUESTED:
+    if not _interactive_session():
+        logger.critical("--desktop needs the user's interactive session (not session 0 / a service)")
+        sys.exit(2)
+    # Imported before anything creates a window: it sets the DPI awareness first.
+    from desktop import desktop_server as desktop_srv
+    # Desktop defaults: port 8011, this PC only, key in the user env var DESKTOP_MCP_API_KEY
+    # (read by desktop/mcp_headers.ps1) - not the MCP_* values of a .env.
+    Config.HOST, Config.PORT, Config.API_KEY = desktop_srv.Config.HOST, desktop_srv.Config.PORT, desktop_srv.Config.API_KEY
 
 
 # =============================================================================
@@ -193,7 +240,8 @@ if FASTMCP_AVAILABLE:
         logger.warning("No API_KEY configured or auth not available - server running without authentication")
 
     # Create FastMCP server (stateless HTTP set via FASTMCP_STATELESS_HTTP above)
-    mcp = FastMCP("ops-mcp", auth=auth_provider)
+    mcp = FastMCP("ops-mcp", auth=auth_provider,
+                  instructions=desktop_srv.INSTRUCTIONS if desktop_srv else None)
 
     # ==========================================================================
     # Git Tools
@@ -677,13 +725,25 @@ if FASTMCP_AVAILABLE:
     @mcp.custom_route("/health", methods=["GET"])
     async def health_check(request):
         """Health check endpoint."""
-        return JSONResponse({
+        body = {
             "status": "healthy",
             "server": "ops-mcp",
             "version": "2.0.0",
             "transport": "streamable-http",
+            "desktop": desktop_srv is not None,
             "timestamp": datetime.now().isoformat()
-        })
+        }
+        if desktop_srv:
+            # read without lighting the overlay (a tool call would)
+            body.update(paused=desktop_srv.STOP.stopped, overlay_state=desktop_srv.OVERLAY.state,
+                        ghost_visible=desktop_srv.OVERLAY.ghost_visible)
+        return JSONResponse(body)
+
+    if desktop_srv:
+        for _name in SERVER_ONLY_TOOLS:
+            mcp.remove_tool(_name)
+        # Its PresenceMiddleware (mandatory border + ghost cursor) only runs on its own tools.
+        mcp.mount(desktop_srv.mcp)
 
     @mcp.custom_route("/", methods=["GET"])
     async def root(request):
@@ -767,6 +827,8 @@ def main():
     parser = argparse.ArgumentParser(description="Ops MCP Server (FastMCP)")
     parser.add_argument("--port", type=int, default=Config.PORT, help="Port to listen on")
     parser.add_argument("--host", default=Config.HOST, help="Host to bind to")
+    parser.add_argument("--desktop", action="store_true",
+                        help="Also serve the desktop tools (user session only, see install_service.ps1 -Desktop)")
     args = parser.parse_args()
 
     if not FASTMCP_AVAILABLE:
@@ -776,6 +838,10 @@ def main():
 
     Config.PORT = args.port
     Config.HOST = args.host
+    if desktop_srv and not desktop_srv._is_loopback(Config.HOST) and not Config.API_KEY:
+        logger.critical("Refusing to listen on %s without DESKTOP_MCP_API_KEY (LAN exposure needs a key).",
+                        Config.HOST)
+        sys.exit(2)
 
     auth_status = "ENABLED (Bearer Token)" if Config.API_KEY else "DISABLED (no API_KEY)"
 

@@ -38,6 +38,8 @@ $RequirementsFile = Join-Path $PSScriptRoot "requirements.txt"
 # NOT a service: session 0 (services) has no access to the interactive desktop,
 # so capture, overlay and input would all fail there. It runs as a scheduled
 # task "at logon" of the user running this script, inside that user's session.
+# One server: the task runs server_new.py --desktop = the usual tools (minus the
+# server-only deploy ones) + the desktop tools, on one port with one key.
 # Self-healing and idempotent like the service mode: safe to re-run any time.
 
 function Find-DesktopPython {
@@ -120,7 +122,7 @@ if ($Desktop -or $DesktopRemove) {
         Write-Host "ERROR: -DesktopListenLan needs an elevated PowerShell (it opens a firewall port)." -ForegroundColor Red
         exit 1
     }
-    if (-not (Test-Path $DesktopScript)) {
+    if (-not (Test-Path $DesktopScript) -or -not (Test-Path $ServerScript)) {
         Write-Host "ERROR: $DesktopScript not found - copy the whole project folder." -ForegroundColor Red
         exit 1
     }
@@ -164,7 +166,7 @@ if ($Desktop -or $DesktopRemove) {
 
     # --- sanity checks before touching the running server ---------------------
     Write-Host "Checking the desktop server compiles and its unit tests pass..." -ForegroundColor Cyan
-    $pyFiles = @((Join-Path $PSScriptRoot "mcp_common.py")) + (Get-ChildItem $DesktopDir -Filter *.py).FullName
+    $pyFiles = @((Join-Path $PSScriptRoot "mcp_common.py"), $ServerScript) + (Get-ChildItem $DesktopDir -Filter *.py).FullName
     & $VenvPython -m py_compile @pyFiles
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: a desktop server file failed to compile (corrupted/incomplete copy?)." -ForegroundColor Red
@@ -219,7 +221,7 @@ if ($Desktop -or $DesktopRemove) {
     # RestartCount only covers a task that fails to START, not a process that crashes later.
     $Supervisor = Join-Path $PSScriptRoot "supervise.py"
     $SupervisorLog = Join-Path $env:LOCALAPPDATA "desktop-mcp\supervisor.log"
-    $Action = New-ScheduledTaskAction -Execute $exe -Argument "`"$Supervisor`" --name desktop-mcp --log `"$SupervisorLog`" -- `"$exe`" `"$DesktopScript`" --port $DesktopPort --host $BindHost" -WorkingDirectory $DesktopDir
+    $Action = New-ScheduledTaskAction -Execute $exe -Argument "`"$Supervisor`" --name desktop-mcp --log `"$SupervisorLog`" -- `"$exe`" `"$ServerScript`" --desktop --port $DesktopPort --host $BindHost" -WorkingDirectory $PSScriptRoot
     $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $me
     $Principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited
     $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
