@@ -257,6 +257,7 @@ class Overlay:
         self.trail: list[LayeredWindow] = []
         self.trail_pos: list[tuple] = []
         self.ghost_pos = None
+        self.ghost_visible = False                # tied to the border: shown/hidden together
         self.ghost_anim = None                    # (p0, p1, t0, dur, event)
         self.ghost_ring = None                    # (t0, dur)
         self.ghost_scale = None
@@ -283,6 +284,10 @@ class Overlay:
 
     def activity(self, device: str | None, label: str, mode: str = "") -> None:
         self.post("activity", device=device, label=label, mode=mode)
+
+    def keep_alive(self) -> None:
+        """A tool is still running: keep the border and the ghost up (restart the linger timer)."""
+        self.post("keep_alive")
 
     def ghost_move(self, x: int, y: int, wait: bool = True) -> None:
         dur = float(self.cfg.get("ghost", {}).get("anim_ms", 220)) / 1000
@@ -436,10 +441,17 @@ class Overlay:
             self.state = "working"
         if self.active:
             self.target[self.active] = 1.0
+        self._show_ghost()
         w.user32.KillTimer(self.ctrl_hwnd, T_IDLE)
         w.user32.SetTimer(self.ctrl_hwnd, T_LINGER, int(float(bcfg.get("working_linger_s", 3)) * 1000), None)
         self._render_label()
         self._ensure_anim()
+
+    def _cmd_keep_alive(self, ev):
+        if self.state == "idle":
+            return  # nothing shown yet: activity() decides where
+        w.user32.KillTimer(self.ctrl_hwnd, T_IDLE)
+        w.user32.SetTimer(self.ctrl_hwnd, T_LINGER, int(float(self.cfg.get("border", {}).get("working_linger_s", 3)) * 1000), None)
 
     def _cmd_paused(self, ev, paused: bool, reason: str = ""):
         self.state = "paused" if paused else "working"
@@ -464,6 +476,8 @@ class Overlay:
             for d in self.target:
                 self.target[d] = 0.0
             self.state = "idle" if self.state != "paused" else self.state
+            if self.state == "idle":
+                self._hide_ghost()
         elif action in ("show", "monitor"):
             if device and device in self.strips:
                 if self.active and self.active != device:
@@ -476,16 +490,35 @@ class Overlay:
         self._render_label()
         self._ensure_anim()
 
+    def _show_ghost(self):
+        """The ghost is mandatory while the border is up: place it (centre of the active
+        monitor the first time) and draw it."""
+        if self.ghost_pos is None:
+            m = self._mon(self.active) or (self.monitors[0] if self.monitors else None)
+            if m is None:
+                return
+            self.ghost_pos = ((m.rect[0] + m.rect[2]) // 2, (m.rect[1] + m.rect[3]) // 2)
+        self.ghost_visible = True
+        if not self.ghost_anim:
+            self._render_ghost(0.0)
+
+    def _hide_ghost(self):
+        self.ghost_visible = False
+        if self.ghost_anim and self.ghost_anim[4]:
+            self.ghost_anim[4].set()  # release a ghost_move() waiter
+        self.ghost_anim = self.ghost_ring = None
+        if self.ghost_win is not None:
+            self.ghost_win.update(alpha=0)
+        for t in self.trail:
+            t.update(alpha=0)
+
     def _cmd_ghost_move(self, ev, x, y):
         gcfg = self.cfg.get("ghost", {})
-        if not gcfg.get("enabled", True):
-            if ev:
-                ev.set()
-            return
         target = (int(x), int(y))
         if self.ghost_pos is None:
             m = self._mon(self.active) or (self.monitors[0] if self.monitors else None)
             self.ghost_pos = ((m.rect[0] + m.rect[2]) // 2, (m.rect[1] + m.rect[3]) // 2) if m else target
+        self.ghost_visible = True
         dur = float(gcfg.get("anim_ms", 220)) / 1000
         if self.ghost_anim and self.ghost_anim[4]:
             self.ghost_anim[4].set()
@@ -494,14 +527,9 @@ class Overlay:
 
     def _cmd_ghost(self, ev, action: str, x=None, y=None):
         if action == "hide":
-            self.ghost_win.update(alpha=0)
-            for t in self.trail:
-                t.update(alpha=0)
+            self._hide_ghost()
         elif action == "show":
-            if self.ghost_pos is None:
-                m = self._mon(self.active) or self.monitors[0]
-                self.ghost_pos = ((m.rect[0] + m.rect[2]) // 2, (m.rect[1] + m.rect[3]) // 2)
-            self._render_ghost(0.0)
+            self._show_ghost()
         elif action == "move_to":
             self._cmd_ghost_move(None, x, y)
 
@@ -563,6 +591,8 @@ class Overlay:
         self._apply_levels()
 
     def _render_ghost(self, ring: float):
+        if not self.ghost_visible or self.ghost_pos is None or self.ghost_win is None:
+            return  # hidden with the border: never re-shown by a rebuild or a late animation frame
         m = self._mon_at(*self.ghost_pos) or (self.monitors[0] if self.monitors else None)
         scale = m.scale if m else 1.0
         gcfg = self.cfg.get("ghost", {})
@@ -573,7 +603,7 @@ class Overlay:
         self.ghost_win.update(pos=(self.ghost_pos[0] - GHOST_HOTSPOT, self.ghost_pos[1] - GHOST_HOTSPOT), alpha=1.0)
 
     def _render_trail(self):
-        if not self.trail:
+        if not self.trail or not self.ghost_visible:
             return
         color = _hex(self.cfg.get("ghost", {}).get("color", "#FF8C00"))
         for i, win in enumerate(self.trail):
@@ -595,11 +625,10 @@ class Overlay:
             lo = float(bcfg.get("pulse_min_factor", 0.55))
             ph = (time.perf_counter() % period) / period
             pulse = lo + (1 - lo) * (0.5 + 0.5 * math.cos(2 * math.pi * ph))
-        visible = bcfg.get("enabled", True)
         for dev, strips in self.strips.items():
             lvl = self.level.get(dev, 0.0) * (pulse if dev == self.active else 1.0)
             for win in strips.values():
-                win.update(alpha=lvl if visible else 0)
+                win.update(alpha=lvl)  # mandatory while the server is in use: border.enabled is ignored
         act = self.level.get(self.active, 0.0) if self.active else 0.0
         if self.label_win is not None:
             self.label_win.update(alpha=act if self.cfg.get("border", {}).get("label", True) else 0)
@@ -663,10 +692,7 @@ class Overlay:
                 self.state = "idle"
                 for d in self.target:
                     self.target[d] = 0.0
-                self._fade_ghost_out = True
-                self.ghost_win.update(alpha=0)
-                for t in self.trail:
-                    t.update(alpha=0)
+                self._hide_ghost()
             self._ensure_anim()
             return
         if tid != T_ANIM:
@@ -717,6 +743,7 @@ class Overlay:
             "active_monitor": self.active,
             "label": self.label_text,
             "ghost_pos": self.ghost_pos,
+            "ghost_visible": self.ghost_visible,
             "windows": len(self.windows),
             "all_excluded_from_capture": self.excluded_from_capture(),
             "timer_ms": self._anim_interval,

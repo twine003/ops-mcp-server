@@ -20,8 +20,9 @@ The user's own mouse/keyboard activity never pauses Claude. The only stops:
 the on-screen "Detener Claude" button, the stop hotkey (backup), pause(),
 or a chat message to the assistant (effective between tool calls).
 
-Usage:
-    python desktop_server.py [--port 8011] [--host 127.0.0.1]
+Served by server_new.py, mounted into the main MCP server (one server, one
+install, one key on a PC):
+    python server_new.py --desktop [--port 8011] [--host 127.0.0.1]
 """
 
 from __future__ import annotations
@@ -31,6 +32,11 @@ import sys
 from pathlib import Path
 
 _PKG_DIR = Path(__file__).resolve().parent
+if __name__ == "__main__":
+    # Old scheduled tasks still point here: start the unified server instead (it imports
+    # this module itself - running both would put two overlays on the screen).
+    import subprocess
+    sys.exit(subprocess.call([sys.executable, str(_PKG_DIR.parent / "server_new.py"), "--desktop", *sys.argv[1:]]))
 if __package__ in (None, ""):
     # launched as a script: make "desktop" importable as a package and reach
     # mcp_common.py one level up (both live in this project folder).
@@ -967,9 +973,70 @@ def _wait_for(condition, timeout):
 
 os.environ.setdefault("FASTMCP_STATELESS_HTTP", "true")
 from fastmcp import FastMCP  # noqa: E402
+from fastmcp.server.middleware import Middleware, MiddlewareContext  # noqa: E402
 from fastmcp.utilities.types import Image  # noqa: E402
 
-mcp = FastMCP("desktop-mcp", auth=mcp_common.make_auth_provider(Config.API_KEY, logger))
+GUIDE_PATH = _PKG_DIR / "AGENT_GUIDE.md"
+
+# Sent to every client at connection time (Claude Code puts it in the agent's system
+# prompt even while the tools are still deferred). Keep it short: the full rules are in
+# AGENT_GUIDE.md, returned by usage_guide().
+INSTRUCTIONS = """\
+Desktop control of the user's Windows session. The user WATCHES you work: the orange
+"Claude" ghost cursor and the monitor border are how they see where you are.
+BEFORE the first desktop action, call usage_guide() and follow it. Key rules:
+- Border and ghost cursor are mandatory: every tool call shows them and they fade by
+  themselves ~20 s after your last call (they cannot be hidden). But the ghost only
+  MOVES when a tool gets a target (click, invoke, set_value, select, type_text, key,
+  scroll, drag, read_value, focus_window, callout, ghost_cursor); screenshot, ui_tree
+  and find_element leave it where it was.
+- So at the start of a task and while you read or analyse something, point at it with
+  ghost_cursor(action="move_to", x, y) or ghost_cursor(action="highlight", rect).
+- Act by element id (ui_tree / find_element) or by point; pass window/element to key
+  and type_text.
+- Explain or ask on screen with callout(). If a tool says you are paused, stop and ask.
+"""
+
+mcp = FastMCP("desktop-mcp", instructions=INSTRUCTIONS,
+              auth=mcp_common.make_auth_provider(Config.API_KEY, logger))
+
+
+def _presence(tool: str) -> None:
+    """Border + ghost cursor are mandatory whenever a tool runs: show them on the monitor
+    Claude is working on (the foreground window's monitor the first time)."""
+    mons = enumerate_monitors()
+    m = _active_monitor(mons)
+    if m is None:
+        fg = w.user32.GetForegroundWindow()
+        r = w.window_rect(fg) if fg else None
+        m = nearest_monitor(mons, *_center(r)) if r else next((m for m in mons if m.primary), mons[0])
+    OVERLAY.activity(m.device, OVERLAY.label_text.split("  ·  ")[0] or tool, "")
+
+
+class PresenceMiddleware(Middleware):
+    """Every tool call lights the border and the ghost cursor and keeps them up while it runs;
+    they fade together a few seconds after the last call (border.working_linger_s + idle_hide_s)."""
+
+    async def on_call_tool(self, context: MiddlewareContext, call_next):
+        try:
+            _presence(context.message.name)
+        except Exception:  # noqa: BLE001 - never block a tool because of the overlay
+            logger.exception("presence failed")
+
+        async def _beat():
+            while True:
+                await asyncio.sleep(2)
+                OVERLAY.keep_alive()
+
+        beat = asyncio.create_task(_beat())
+        try:
+            return await call_next(context)
+        finally:
+            beat.cancel()
+            OVERLAY.keep_alive()
+
+
+mcp.add_middleware(PresenceMiddleware())
 
 
 def _image_result(res):
@@ -1223,8 +1290,13 @@ async def wait_for(condition: dict, timeout: float = 10) -> dict:
 @mcp.tool()
 async def ghost_cursor(action: str = "show", x: int | None = None, y: int | None = None,
                        rect: list[int] | None = None) -> dict:
-    """Claude's visible (fake) cursor: 'show' | 'hide' | 'move_to' (x,y) | 'highlight' (rect).
-    Purely visual - never moves the real cursor."""
+    """Claude's visible (fake) cursor: 'show' | 'move_to' (x,y) | 'highlight' (rect).
+    Purely visual - never moves the real cursor. It is mandatory: it cannot be hidden, it
+    fades with the border a few seconds after the last tool call."""
+    if action == "hide":
+        return {"ok": False, "error_type": "refused",
+                "error": "the ghost cursor is mandatory while you use this server; it hides by itself "
+                         "with the border a few seconds after your last tool call"}
     if action == "highlight":
         if not rect:
             return {"ok": False, "error": "rect required"}
@@ -1245,7 +1317,12 @@ async def ghost_cursor(action: str = "show", x: int | None = None, y: int | None
 async def screen_border(action: str = "show", monitor: str | None = None, color: str | None = None,
                         width: int | None = None) -> dict:
     """Orange glow on the edges of the monitor Claude is working on.
-    action: 'show' | 'hide' | 'monitor' (move it to `monitor`). color: '#RRGGBB'. width: px (physical)."""
+    action: 'show' | 'monitor' (move it to `monitor`). color: '#RRGGBB'. width: px (physical).
+    It is mandatory: it cannot be hidden, it fades by itself a few seconds after the last tool call."""
+    if action == "hide":
+        return {"ok": False, "error_type": "refused",
+                "error": "the border is mandatory while you use this server; it hides by itself "
+                         "a few seconds after your last tool call"}
     device = None
     if monitor is not None:
         device = resolve_monitor(enumerate_monitors(), monitor, None).device
@@ -1358,6 +1435,18 @@ async def set_option(freeze_user_mouse: bool | None = None, persist: bool = Fals
 
 
 @mcp.tool()
+async def usage_guide() -> dict:
+    """How to install and use this server, and the rules for working on the user's screen
+    (ghost cursor always visible, element ids over coordinates, callouts, stopping).
+    Call it BEFORE the first desktop action of a session and follow it."""
+    try:
+        text = GUIDE_PATH.read_text(encoding="utf-8")
+    except OSError as e:
+        return {"ok": False, "error": f"guide not found: {e}", "instructions": INSTRUCTIONS}
+    return {"ok": True, "path": str(GUIDE_PATH), "guide": text}
+
+
+@mcp.tool()
 async def status() -> dict:
     """Server state: paused or not (and why), active monitor, overlay state, allow/deny lists,
     stop hotkey, automation thread activity, last audited actions."""
@@ -1402,6 +1491,8 @@ from starlette.responses import JSONResponse  # noqa: E402
 async def health_check(request):
     return JSONResponse({"status": "healthy", "server": "desktop-mcp", "version": VERSION,
                          "transport": "streamable-http", "paused": STOP.stopped,
+                         # read without lighting the overlay (a tool call would)
+                         "overlay_state": OVERLAY.state, "ghost_visible": OVERLAY.ghost_visible,
                          "timestamp": datetime.now().isoformat()})
 
 
@@ -1414,25 +1505,3 @@ def _is_loopback(host: str) -> bool:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return host == "localhost"
-
-
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="Desktop MCP Server")
-    parser.add_argument("--port", type=int, default=Config.PORT)
-    parser.add_argument("--host", default=Config.HOST)
-    args = parser.parse_args()
-    Config.PORT, Config.HOST = args.port, args.host
-    if not _is_loopback(Config.HOST) and not Config.API_KEY:
-        logger.critical("Refusing to listen on %s without DESKTOP_MCP_API_KEY (LAN exposure needs a key).",
-                        Config.HOST)
-        sys.exit(2)
-    logger.info("desktop-mcp %s on http://%s:%s/mcp (auth %s, dpi %s, hotkey %s registered=%s, overlay %s)",
-                VERSION, Config.HOST, Config.PORT, "on" if Config.API_KEY else "OFF", DPI_MODE,
-                CFG.get("stop_hotkey"), GUARD.hotkey_registered, OVERLAY.error or "ok")
-    mcp_common.start_self_watchdog(Config.PORT, logger)
-    mcp.run(transport="streamable-http", host=Config.HOST, port=Config.PORT)
-
-
-if __name__ == "__main__":
-    main()
