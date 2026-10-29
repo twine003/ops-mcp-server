@@ -26,6 +26,9 @@ How it works:
   `screenshot`, `ui_tree`, `find_element`, `list_windows`, `wait_for` and
   `status` leave it where it was: if you only look and read, the user cannot
   tell what you are looking at.
+- If the user watches remotely (RustDesk, AnyDesk, TeamViewer) and sees no
+  cursor, border or bubble, it is the capture exclusion: tell them about
+  `"remote_visible": true` (README, "What you see"); `status()` reports it.
 - It is invisible in captures (`WDA_EXCLUDEFROMCAPTURE`). Not seeing it in
   your `screenshot` does NOT mean it is off: `screenshot` draws it on top
   when `show_cursor=true` (the default), and `status()` reports its state.

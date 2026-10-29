@@ -15,6 +15,9 @@
 
   "stop_hotkey": "ctrl+alt+shift+f12",
 
+  "_remote_visible_comment": "true = the ghost cursor, the border, the Stop button and the comment bubbles are NOT excluded from screen captures, so a user watching through RustDesk/AnyDesk/TeamViewer sees them (those tools stream a capture). Side effect: they also appear in Claude's own screenshots. Set it in %LOCALAPPDATA%/desktop-mcp/config.json and restart the Desktop-MCP task.",
+  "remote_visible": false,
+
   "border": {
     "enabled": true,
     "color": "#FF8C00",

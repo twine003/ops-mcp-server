@@ -15,7 +15,7 @@ Safety:
   - the window title starts with CALLOUT_TITLE, which safety.Policy always
     denies, so no tool can read, click or type into it;
   - like the rest of the overlay it is excluded from screen captures
-    (callout.exclude_from_capture, default true).
+    (callout.exclude_from_capture, default true; false with remote_visible).
 """
 
 from __future__ import annotations
@@ -264,7 +264,7 @@ class CalloutUI:
         try:
             hwnd = w.user32.GetAncestor(top.winfo_id(), GA_ROOT) or top.winfo_id()
             w.user32.SetWindowTextW(hwnd, f"{CALLOUT_TITLE} {c.id}")
-            if ccfg.get("exclude_from_capture", True):
+            if ccfg.get("exclude_from_capture", not self.cfg.get("remote_visible", False)):
                 w.user32.SetWindowDisplayAffinity(hwnd, w.WDA_EXCLUDEFROMCAPTURE)
         except Exception:  # noqa: BLE001
             log.exception("callout window setup failed")

@@ -74,7 +74,12 @@ class LayeredWindow:
         if not self.hwnd:
             raise ctypes.WinError(ctypes.get_last_error())
         self.kind = kind
-        self.excluded = bool(w.user32.SetWindowDisplayAffinity(self.hwnd, w.WDA_EXCLUDEFROMCAPTURE))
+        # remote_visible: the user watches through RustDesk/AnyDesk/TeamViewer, which stream a screen
+        # capture; excluded windows would never reach them.
+        if owner.cfg.get("remote_visible", False):
+            self.excluded = False
+        else:
+            self.excluded = bool(w.user32.SetWindowDisplayAffinity(self.hwnd, w.WDA_EXCLUDEFROMCAPTURE))
         owner.windows[int(self.hwnd)] = self
         self.memdc = None
         self.hbmp = None
@@ -746,6 +751,7 @@ class Overlay:
             "ghost_visible": self.ghost_visible,
             "windows": len(self.windows),
             "all_excluded_from_capture": self.excluded_from_capture(),
+            "remote_visible": bool(self.cfg.get("remote_visible", False)),
             "timer_ms": self._anim_interval,
             "stop_button_rect": self.stop_btn_rect,
             "error": self.error,

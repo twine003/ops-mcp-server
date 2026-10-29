@@ -315,6 +315,8 @@ def _draw_claude_cursor(img, frame: CaptureFrame) -> dict | None:
     from PIL import ImageDraw
     ix, iy = frame.virtual_to_image(x, y)
     info["image"] = (ix, iy)
+    if not OVERLAY.excluded_from_capture():
+        return info  # remote_visible: the real ghost is already in the capture
     d = ImageDraw.Draw(img)
     r = max(7, round(14 * min(1.0, frame.scale * 1.6)))
     for col, wd in (((255, 255, 255), 5), ((255, 120, 0), 3)):

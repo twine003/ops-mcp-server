@@ -261,6 +261,13 @@ overlay windows are click-through, never take focus and are excluded from
 every screen capture (`WDA_EXCLUDEFROMCAPTURE`). Colours and sizes: the
 `screen_border` tool or the `border` / `ghost` sections of the config.
 
+**Watching through RustDesk, AnyDesk or TeamViewer?** Those tools stream a
+screen capture, so by default they never show the cursor, the border, the Stop
+button or the bubbles. Set `"remote_visible": true` in
+`%LOCALAPPDATA%\desktop-mcp\config.json` and restart the `Desktop-MCP` task:
+everything stays visible remotely (and also appears in Claude's own
+screenshots, which then skip drawing the cursor on top).
+
 ### Comment bubbles
 
 `callout(text, ...)` shows a bubble next to what the assistant is pointing at
