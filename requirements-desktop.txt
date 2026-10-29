@@ -9,3 +9,4 @@ dxcam>=0.3.0
 mss>=10.0
 Pillow>=10.0
 numpy>=1.26
+imageio-ffmpeg>=0.5     # ffmpeg (libx264) for record_start: screen video

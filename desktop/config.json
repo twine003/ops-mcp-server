@@ -72,6 +72,22 @@
     "_freeze_comment": "Off by default (user preference 2026-09-23): the user keeps full control of the mouse. true = freeze the physical mouse during SendInput strokes/clicks so it cannot mix with Claude's"
   },
 
+  "recording": {
+    "_comment": "record_start/record_stop: screen video (MP4 H.264, ffmpeg from imageio-ffmpeg). deny_mode: 'mask' = denied windows inside the area are painted black every frame, 'refuse' = record_start fails if one is inside. Limits stop the recording by themselves (the file is kept).",
+    "dir": "%LOCALAPPDATA%\\desktop-mcp\\grabaciones",
+    "default_fps": 30,
+    "max_fps": 60,
+    "max_duration_s": 900,
+    "max_file_mb": 2048,
+    "max_dir_mb": 20480,
+    "min_free_disk_mb": 2048,
+    "max_concurrent": 2,
+    "crf": 23,
+    "preset": "veryfast",
+    "deny_mode": "mask",
+    "grab_threads": 3
+  },
+
   "audit": {
     "path": "%LOCALAPPDATA%\\desktop-mcp\\audit.jsonl",
     "thumbnails": false,

@@ -48,6 +48,7 @@ from desktop import winapi as w  # noqa: E402
 DPI_MODE = w.set_dpi_awareness()
 
 import asyncio  # noqa: E402
+import atexit  # noqa: E402
 import concurrent.futures  # noqa: E402
 import ctypes  # noqa: E402
 import ipaddress  # noqa: E402
@@ -59,7 +60,10 @@ from collections import OrderedDict  # noqa: E402
 from datetime import datetime  # noqa: E402
 
 import mcp_common  # noqa: E402
+import numpy as np  # noqa: E402
+
 from desktop import capture as cap  # noqa: E402
+from desktop import screen_video as sv  # noqa: E402
 from desktop import inputs as inp  # noqa: E402
 from desktop import uia  # noqa: E402
 from desktop import windows as wins  # noqa: E402
@@ -1013,6 +1017,7 @@ BEFORE the first desktop action, call usage_guide() and follow it. Key rules:
 - The user can write to you at any time with the on-screen envelope button: such messages
   arrive at the top of your next desktop tool result ("MESSAGE FROM THE USER") or through
   messages(wait=N). Read them and act on them before going on.
+- Screen VIDEO (MP4): record_start(target|region, fps, duration) -> id, then record_stop(id).
 """
 
 mcp = FastMCP("desktop-mcp", instructions=INSTRUCTIONS,
@@ -1455,6 +1460,230 @@ async def callout_close(id: int | None = None) -> dict:
     CALLOUTS.close(id, "closed")
     OVERLAY.release_highlight()
     return {"ok": True, "callouts": CALLOUTS.snapshot()}
+
+
+# =============================================================================
+# Screen video (screen_video.py): own threads, never the automation thread
+# =============================================================================
+
+VIDEO = sv.ScreenVideo(CFG, logger)
+_PROC_NAMES: dict[int, str] = {}
+_FORCED_EXCLUDED: set[int] = set()   # remote_visible: own windows hidden from capture while recording
+
+
+def _proc_name(pid: int) -> str:
+    name = _PROC_NAMES.get(pid)
+    if name is None:
+        if len(_PROC_NAMES) > 2000:
+            _PROC_NAMES.clear()
+        name = _PROC_NAMES[pid] = w.process_name(pid) if pid else ""
+    return name
+
+
+def _visible_windows() -> list[dict]:
+    """Top-level windows that can show pixels (visible, not minimized, not cloaked), top of the
+    z-order first."""
+    out = []
+
+    @w.WNDENUMPROC
+    def _cb(hwnd, _):
+        if w.user32.IsWindowVisible(hwnd) and not w.user32.IsIconic(hwnd) and not w.is_cloaked(hwnd):
+            pid = w.window_pid(hwnd)
+            if pid == OWN_PID:
+                if CFG.get("remote_visible", False) and VIDEO.active() and int(hwnd) not in _FORCED_EXCLUDED:
+                    # overlay / bubbles are captured on purpose for RustDesk: hide them from the video
+                    if w.user32.SetWindowDisplayAffinity(hwnd, w.WDA_EXCLUDEFROMCAPTURE):
+                        _FORCED_EXCLUDED.add(int(hwnd))
+                return True
+            ex = w.user32.GetWindowLongW(hwnd, w.GWL_EXSTYLE)
+            out.append({"pid": pid, "process": _proc_name(pid), "title": w.window_text(hwnd),
+                        "rect": w.window_rect(hwnd),
+                        # layered / click-through windows may be translucent: never count as cover
+                        "occludes": not ex & (w.WS_EX_LAYERED | w.WS_EX_TRANSPARENT)})
+        return True
+
+    w.user32.EnumWindows(_cb, 0)
+    return out
+
+
+def _video_denied(rect: tuple) -> list[dict]:
+    return sv.denied_rects(_visible_windows(), POLICY, OWN_PID, rect)
+
+
+def _video_ended(rec) -> None:
+    if not VIDEO.active() and _FORCED_EXCLUDED:
+        for h in list(_FORCED_EXCLUDED):
+            w.user32.SetWindowDisplayAffinity(h, 0)  # back to visible for the remote viewer
+        _FORCED_EXCLUDED.clear()
+    AUDIT.write({"tool": "record_end", "id": rec.id, "state": rec.state, "reason": rec.stop_reason,
+                 "path": str(rec.path), "video_s": round(rec.video_seconds, 2), "error": rec.error or None})
+
+
+class _MssGrab:
+    """mss instance owned by the recording thread (GDI handles are per thread)."""
+
+    def __init__(self):
+        import mss
+        self._sct = mss.MSS() if hasattr(mss, "MSS") else mss.mss()
+
+    def grab_fn(self, rect):
+        l, t, r, b = rect
+        return np.asarray(self._sct.grab({"left": l, "top": t, "width": r - l, "height": b - t}))
+
+    def close(self):
+        self._sct.close()
+
+
+def _screen_ok() -> bool:
+    d = w.input_desktop()
+    return bool(d) and d.lower() == "default"
+
+
+def _record_start(target, region, fps, duration, show_cursor, show_ghost, audio, path, scale):
+    t0 = time.perf_counter()
+    if audio:
+        raise ValueError("audio recording is not supported yet: record without audio and add the voice-over "
+                         "when editing")
+    _require_running()
+    lim = VIDEO.limits
+    fps, duration, scale = sv.check_params(fps, duration, scale, lim)
+    mons = _monitors()
+    vb = virtual_bounds(mons)
+    tgt = {"monitor": None}
+    if region:
+        rect = sv.normalize_rect(region, vb)
+        desc = {"kind": "region"}
+        tgt["monitor"] = monitor_for_rect(mons, rect)
+    elif isinstance(target, str) and target.lower().startswith("window:"):
+        hwnd = wins.find_window(target.split(":", 1)[1], mons, OWN_PID)
+        tgt = _target_from_window(hwnd, mons)
+        POLICY.check_read(tgt["process"], tgt["title"])
+        if w.user32.IsIconic(hwnd):
+            raise RuntimeError("window is minimized - restore it (focus_window/move_window) first")
+        rect = sv.normalize_rect(tgt["rect"], vb)
+        desc = {"kind": "window", "hwnd": hwnd, "title": tgt["title"], "process": tgt["process"],
+                "note": "the window's rect at start is recorded (screen pixels): do not move it while recording"}
+    elif target in ("all", "virtual", "desktop"):
+        rect = sv.normalize_rect(vb, vb)
+        desc = {"kind": "virtual_desktop"}
+    else:
+        mon = resolve_monitor(mons, target, _active_monitor(mons))
+        rect = sv.normalize_rect(mon.rect, vb)
+        tgt["monitor"] = mon
+        desc = {"kind": "monitor", "monitor": mon.index}
+    denied = _video_denied(rect)
+    if denied and lim.get("deny_mode", "mask") == "refuse":
+        raise PolicyError("denied window(s) inside the area, recording refused: "
+                          + ", ".join(sorted({d["process"] or d["title"] for d in denied})))
+    out_dir = VIDEO.out_dir
+    sv.check_disk(out_dir, lim)
+    out = sv.resolve_output_path(path, out_dir)
+    sv.check_disk(out.parent, lim)
+    out_size = sv.output_size(rect[2] - rect[0], rect[3] - rect[1], scale)
+    mon = tgt.get("monitor") or monitor_for_rect(mons, rect)
+    ghost_note = None
+    if show_ghost and not CFG.get("ghost", {}).get("enabled", True):
+        ghost_note = "ghost.enabled=false in the config: there is no ghost cursor to draw"
+    rec = VIDEO.start(rect, fps, duration, out, out_size, grab_fn=None, grab_factory=_MssGrab,
+                      deny_fn=_video_denied, screen_ok_fn=_screen_ok,
+                      pointer_fn=w.cursor_pos if show_cursor else None,
+                      ghost_fn=(lambda: OVERLAY.ghost_pos if OVERLAY.ghost_visible else None) if show_ghost else None,
+                      sprite_scale=mon.scale if mon else 1.0, describe=desc, on_end=_video_ended)
+    if mon is not None:
+        OVERLAY.activity(mon.device, f"grabando video {rec.id}", "")
+    _audit("record_start", t0, tgt if tgt.get("monitor") else None, id=rec.id, rect=rect, fps=fps,
+           duration=duration, path=str(out))
+    st = rec.status()
+    if denied:
+        st["masked_denied_windows"] = sorted({d["process"] or d["title"] for d in denied})
+        st["note_denied"] = "denied windows inside the area are painted black in every frame"
+    if ghost_note:
+        st["ghost_note"] = ghost_note
+    return {"ok": True, **st}
+
+
+def _on_stop_recordings(paused: bool, reason: str) -> None:
+    if paused and VIDEO.active():
+        # the stop button / hotkey must not wait for ffmpeg to finish the file
+        threading.Thread(target=VIDEO.stop_all, args=(f"stop: {reason}",), daemon=True).start()
+
+
+STOP.on_change(_on_stop_recordings)
+atexit.register(lambda: VIDEO.stop_all("server shutdown", wait=30))
+
+
+@mcp.tool()
+async def record_start(target: str = "active", region: list[int] | None = None, fps: float | None = None,
+                       duration: float | None = None, show_cursor: bool = True, show_ghost: bool = False,
+                       audio: bool = False, path: str | None = None, scale: float = 1.0) -> dict:
+    """Start recording a VIDEO (MP4 H.264) of the screen. Returns its id right away; recording runs in
+    the background while you keep using the other tools.
+
+    The area is chosen like screenshot(): target 'active' | 'primary' | 'all' | monitor index/name |
+    'window:<hwnd or title>' (that window's rect at start), or region [left, top, right, bottom] in
+    virtual-desktop px (overrides target). The size is rounded down to even numbers.
+    fps: 1-60 (default 30). duration: seconds, the recording stops by itself (max recording.max_duration_s,
+    900 s by default); without it call record_stop. scale: 0.1-1.0 output size (e.g. 0.5 for a 4K monitor).
+    show_cursor: draw the user's real mouse pointer. show_ghost: draw Claude's ghost cursor (tutorials).
+    The Claude overlay (border, Stop button, bubbles) never appears. Denied windows (password managers,
+    'password' titles...) are painted black in every frame. path: file name (saved in the recordings folder,
+    %LOCALAPPDATA%/desktop-mcp/grabaciones by default) or absolute .mp4 path; never overwrites.
+    audio: not supported. The Stop button / stop hotkey / pause() end every recording (file is kept)."""
+    return await _run("record_start", _record_start, target, region, fps, duration, show_cursor, show_ghost,
+                      audio, path, scale)
+
+
+@mcp.tool()
+async def record_stop(id: int | None = None) -> dict:
+    """Stop a recording (id from record_start; optional if only one is running) and finish the MP4.
+    Returns path, duration_s, resolution, size_mb, frames and why it stopped."""
+    try:
+        rec = VIDEO.get(id)
+    except sv.RecordingError as e:
+        return _err(e)
+    st = await asyncio.to_thread(rec.stop, "record_stop")
+    AUDIT.write({"tool": "record_stop", "id": rec.id, "path": st.get("path")})
+    return {"ok": st["state"] == "finished", **st}
+
+
+@mcp.tool()
+async def record_pause(id: int | None = None) -> dict:
+    """Pause a recording: nothing is recorded until record_resume (the pause is cut out of the video)."""
+    try:
+        rec = VIDEO.get(id)
+    except sv.RecordingError as e:
+        return _err(e)
+    changed = rec.pause()
+    return {"ok": changed, **({} if changed else {"error": f"recording is {rec.state}"}), **rec.status()}
+
+
+@mcp.tool()
+async def record_resume(id: int | None = None) -> dict:
+    """Resume a paused recording."""
+    try:
+        rec = VIDEO.get(id)
+    except sv.RecordingError as e:
+        return _err(e)
+    if STOP.stopped:
+        return _err(StoppedError(f"Claude is paused ({STOP.reason})"))
+    changed = rec.resume()
+    return {"ok": changed, **({} if changed else {"error": f"recording is {rec.state}"}), **rec.status()}
+
+
+@mcp.tool()
+async def record_status(id: int | None = None) -> dict:
+    """State of one recording (id) or of all recent ones: state (recording / paused / finished / failed),
+    video_seconds, frames, bytes, path, stop_reason, masked denied windows; plus the limits."""
+    if id is not None:
+        try:
+            return {"ok": True, **VIDEO.get(id).status()}
+        except sv.RecordingError as e:
+            return _err(e)
+    lim = VIDEO.limits
+    return {"ok": True, "recordings": VIDEO.snapshot(), "active": [r.id for r in VIDEO.active()],
+            "dir": str(VIDEO.out_dir),
+            "limits": {k: lim[k] for k in ("max_duration_s", "max_file_mb", "max_dir_mb", "min_free_disk_mb",
+                                           "max_concurrent", "max_fps", "deny_mode")}}
 
 
 @mcp.tool()

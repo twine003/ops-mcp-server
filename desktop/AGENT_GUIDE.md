@@ -146,6 +146,27 @@ of a tour.
 - You cannot read the draft or press "Send": only the user's physical click
   or Enter counts.
 
+## 5b. Screen video (`record_start` / `record_stop`)
+
+For tutorials and demos (MP4, H.264):
+
+- `record_start(target | region | "window:<title>", fps=30, duration=None,
+  show_cursor=True, show_ghost=False, scale=1.0, path=None)` returns an `id`
+  at once; the recording runs in the background while you keep working.
+  The area is chosen like `screenshot`. With `duration` it stops by itself.
+- `record_stop(id)` finishes the file and returns `path`, `duration_s`,
+  `resolution`, `size_mb`, `stop_reason`. `record_status(id?)`,
+  `record_pause(id)` / `record_resume(id)` (the pause is cut out).
+- The border, Stop button and bubbles never appear in the video.
+  `show_ghost=True` draws your ghost cursor (only if it is enabled and
+  visible). `show_cursor` draws the user's real pointer.
+- Denied windows (password managers, "password" titles…) are painted black
+  in every frame, even inside a region.
+- Limits: 15 min per recording, 2 GB per file, 2 at a time, free disk;
+  the Stop button / hotkey / `pause()` end every recording (file kept).
+- Files go to `%LOCALAPPDATA%\desktop-mcp\grabaciones` unless `path` says
+  otherwise. No audio.
+
 ## 6. Stopping, safety and limits
 
 - The user stops you with the on-screen **Stop** button, the hotkey
