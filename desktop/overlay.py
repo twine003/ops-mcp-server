@@ -291,9 +291,13 @@ class Overlay:
     def click_pulse(self) -> None:
         self.post("pulse")
 
-    def highlight(self, rect: tuple | None) -> None:
+    def highlight(self, rect: tuple | None, ms: float | None = None) -> None:
+        """Outline `rect`; it fades after `ms` (default ghost.highlight_ms). release_highlight() ends it early."""
         if rect:
-            self.post("highlight", rect=rect)
+            self.post("highlight", rect=rect, ms=ms)
+
+    def release_highlight(self) -> None:
+        self.post("highlight_release")
 
     # ============================================================ UI thread
     def _run(self):
@@ -505,7 +509,7 @@ class Overlay:
         self.ghost_ring = (time.perf_counter(), 0.45)
         self._ensure_anim()
 
-    def _cmd_highlight(self, ev, rect):
+    def _cmd_highlight(self, ev, rect, ms=None):
         l, t, r, b = [int(v) for v in rect]
         m = self._mon_at((l + r) // 2, (t + b) // 2)
         scale = m.scale if m else 1.0
@@ -514,8 +518,14 @@ class Overlay:
         self.hilite_win.set_image(img)
         self.hilite_win.update(pos=(l - pad, t - pad), alpha=1.0)
         self.hilite_level = 1.0
-        self.hilite_until = time.perf_counter() + float(self.cfg.get("ghost", {}).get("highlight_ms", 1400)) / 1000
+        hold = float(ms) if ms is not None else float(self.cfg.get("ghost", {}).get("highlight_ms", 1400))
+        self.hilite_until = time.perf_counter() + hold / 1000
         self._ensure_anim()
+
+    def _cmd_highlight_release(self, ev):
+        if self.hilite_level > 0:
+            self.hilite_until = time.perf_counter()
+            self._ensure_anim()
 
     def _cmd_reconfig(self, ev, cfg: dict):
         self.cfg = cfg

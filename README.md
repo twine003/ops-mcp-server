@@ -246,6 +246,17 @@ overlay windows are click-through, never take focus and are excluded from
 every screen capture (`WDA_EXCLUDEFROMCAPTURE`). Colours and sizes: the
 `screen_border` tool or the `border` / `ghost` sections of the config.
 
+### Comment bubbles
+
+`callout(text, ...)` shows a bubble next to what the assistant is pointing at
+(a rectangle, a point or a UI element, outlined while the bubble is open), for
+guided tours, explanations and questions. It has an **OK** button and, with
+`ask=True`, a text field for your answer; `wait=True` returns
+`accepted` / `answered` (+ `answer`) / `dismissed` / `replaced` / `stopped`, or
+`pending` after `timeout` (then `callout_wait(id)` or `callout_close(id)`).
+Only your physical click and keys count: the bubble's window is always denied
+by the safety policy, so the assistant can neither read nor click it.
+
 ### Safety and configuration
 
 - **Password fields are never typed into or read.**

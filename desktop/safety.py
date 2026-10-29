@@ -32,6 +32,11 @@ def load_config() -> dict:
     return cfg
 
 
+# Title prefix of Claude's comment bubbles (callout.py): always denied, so no tool can
+# read, click or type into them - only the user answers them.
+CALLOUT_TITLE = "Desktop-MCP-Callout"
+
+
 class PolicyError(PermissionError):
     """Raised when an action is refused by the allow/deny policy."""
 
@@ -46,6 +51,8 @@ class Policy:
         self.deny_title = [re.compile(r) for r in cfg.get("deny_window_title_regex", [])]
 
     def is_denied(self, process: str, title: str = "") -> bool:
+        if (title or "").startswith(CALLOUT_TITLE):
+            return True  # Claude's own comment bubble: only the user may answer it
         if process and process.lower() in self.deny:
             return True
         return any(r.search(title or "") for r in self.deny_title)
