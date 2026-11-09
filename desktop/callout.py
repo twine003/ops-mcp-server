@@ -41,6 +41,34 @@ def _physical_event() -> bool:
     return (w.user32.GetMessageExtraInfo() & 0xFFFFFFFF) != w.INJECT_MAGIC
 
 
+def make_draggable(top, widgets) -> None:
+    """Let the user move a borderless window by pressing on any of `widgets` (labels, frames)."""
+    st = {}
+
+    def press(e):
+        st.update(dx=e.x_root - top.winfo_x(), dy=e.y_root - top.winfo_y())
+
+    def motion(e):
+        if st:
+            top.geometry(f"+{e.x_root - st['dx']}+{e.y_root - st['dy']}")
+
+    def release(_e):
+        st.clear()
+
+    for wdg in widgets:
+        wdg.bind("<ButtonPress-1>", press, add="+")
+        wdg.bind("<B1-Motion>", motion, add="+")
+        wdg.bind("<ButtonRelease-1>", release, add="+")
+        try:
+            wdg.configure(cursor="fleur")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _overlaps(a, b) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
 class Callout:
     def __init__(self, cid: int, title: str, text: str, ask: bool, button: str, step: str,
                  anchor: tuple | None, placeholder: str):
@@ -97,6 +125,12 @@ class CalloutUI:
             c.finish(state)
         self.q.put(("sweep", None))
 
+    def start_dock(self, inbox, data_dir) -> None:
+        """Show the always-on "write to Claude" button (desktop/inbox.py) on this UI thread."""
+        self._start()
+        inbox.on_change = lambda n: self.q.put(("badge", n))
+        self.q.put(("dock", (inbox, data_dir)))
+
     def snapshot(self) -> dict:
         open_ = [c.id for c in self.items.values() if not c.done.is_set()]
         return {"thread": bool(self._thread and self._thread.is_alive()), "open": open_, "error": self.error}
@@ -135,6 +169,12 @@ class CalloutUI:
                     break
                 if cmd == "show" and not c.done.is_set():
                     self._build(c)
+                elif cmd == "dock" and getattr(self, "dock", None) is None:
+                    from .inbox import MessageDock
+                    self.dock = MessageDock(self, c[0], self.cfg, c[1])
+                    self.dock.build()
+                elif cmd == "badge" and getattr(self, "dock", None) is not None:
+                    self.dock.set_badge(c)
             self._sweep()
         except Exception:  # noqa: BLE001
             log.exception("callout poll failed")
@@ -185,14 +225,21 @@ class CalloutUI:
 
         head = tk.Frame(frame, bg=bg)
         head.pack(fill="x")
-        tk.Label(head, text=c.title or "Claude", fg=accent, bg=bg, font=f_title).pack(side="left")
+        drag_parts = [frame, head]
+        lbl = tk.Label(head, text=c.title or "Claude", fg=accent, bg=bg, font=f_title)
+        lbl.pack(side="left")
+        drag_parts.append(lbl)
         if c.step:
-            tk.Label(head, text=f"  {c.step}", fg=muted, bg=bg, font=f_small).pack(side="left")
+            lbl = tk.Label(head, text=f"  {c.step}", fg=muted, bg=bg, font=f_small)
+            lbl.pack(side="left")
+            drag_parts.append(lbl)
         close = tk.Label(head, text="✕", fg=muted, bg=bg, font=f_title, cursor="hand2")
         close.pack(side="right")
 
-        tk.Label(frame, text=c.text, fg=fg, bg=bg, font=f_body, justify="left", anchor="w",
-                 wraplength=wrap).pack(fill="x", pady=(px(6), px(8)))
+        body = tk.Label(frame, text=c.text, fg=fg, bg=bg, font=f_body, justify="left", anchor="w",
+                        wraplength=wrap)
+        body.pack(fill="x", pady=(px(6), px(8)))
+        drag_parts.append(body)
 
         entry = None
         if c.ask:
@@ -206,9 +253,12 @@ class CalloutUI:
 
         foot = tk.Frame(frame, bg=bg)
         foot.pack(fill="x", pady=(px(8), 0))
+        drag_parts.append(foot)
         if c.ask:
-            tk.Label(foot, text="Enter = send · Shift+Enter = new line", fg=muted, bg=bg,
-                     font=f_small).pack(side="left")
+            lbl = tk.Label(foot, text="Enter = send · Shift+Enter = new line", fg=muted, bg=bg, font=f_small)
+            lbl.pack(side="left")
+            drag_parts.append(lbl)
+        make_draggable(top, drag_parts)          # the user can move the bubble out of the way
         btn = tk.Button(foot, text=f"  {c.button}  ", bg=accent, fg="white", activebackground="#E07B00",
                         activeforeground="white", relief="flat", bd=0, font=f_title, cursor="hand2",
                         padx=px(10), pady=px(3))
@@ -247,16 +297,24 @@ class CalloutUI:
         bw, bh = top.winfo_reqwidth(), top.winfo_reqheight()
         wl, wt, wr, wb = mon.work
         gap = px(18)
+        dock = getattr(self, "dock", None)
+        avoid = dock.rect(pad=px(10)) if dock is not None else None   # never cover the message button
+        clamp = lambda x, y: (min(max(x, wl + px(8)), wr - bw - px(8)),  # noqa: E731
+                              min(max(y, wt + px(8)), wb - bh - px(8)))
         if c.anchor:
             l, t, r, b = c.anchor
             options = [(r + gap, (t + b) // 2 - bh // 2), (l - gap - bw, (t + b) // 2 - bh // 2),
                        ((l + r) // 2 - bw // 2, b + gap), ((l + r) // 2 - bw // 2, t - gap - bh)]
-            x, y = next(((x, y) for x, y in options if x >= wl and x + bw <= wr and y >= wt and y + bh <= wb),
-                        options[0])
         else:
-            x, y = ax - bw // 2, ay - bh // 2
-        x = min(max(x, wl + px(8)), wr - bw - px(8))
-        y = min(max(y, wt + px(8)), wb - bh - px(8))
+            options = [(ax - bw // 2, ay - bh // 2)]
+        fits = [(x, y) for x, y in options if x >= wl and x + bw <= wr and y >= wt and y + bh <= wb]
+        free = [o for o in fits if not (avoid and _overlaps((o[0], o[1], o[0] + bw, o[1] + bh), avoid))]
+        x, y = clamp(*(free or fits or options)[0])
+        if avoid and _overlaps((x, y, x + bw, y + bh), avoid):      # still on it: go above, else left of it
+            x2, y2 = clamp(x, avoid[1] - bh - px(4))
+            if _overlaps((x2, y2, x2 + bw, y2 + bh), avoid):
+                x2, y2 = clamp(avoid[0] - bw - px(4), y)
+            x, y = x2, y2
         top.geometry(f"+{int(x)}+{int(y)}")
         top.deiconify()
         top.update_idletasks()
@@ -268,6 +326,8 @@ class CalloutUI:
                 w.user32.SetWindowDisplayAffinity(hwnd, w.WDA_EXCLUDEFROMCAPTURE)
         except Exception:  # noqa: BLE001
             log.exception("callout window setup failed")
+        if dock is not None:
+            dock.raise_button()
         if entry is not None:                   # a question: give the field the keyboard
             top.focus_force()
             entry.focus_set()

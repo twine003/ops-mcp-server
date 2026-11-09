@@ -47,6 +47,12 @@
     "enabled": true
   },
 
+  "message_button": {
+    "enabled": true,
+    "_comment": "Always-on floating button (bottom-right, draggable, remembers its place) that opens a window to write to Claude. Messages are attached to the next desktop tool result, returned by messages(), and journaled in inbox.jsonl. Override the texts with \"labels\": {tooltip, title, hint, send, sent, pending}.",
+    "size_px": 46
+  },
+
   "capture": {
     "backend": "auto",
     "default_format": "jpeg",

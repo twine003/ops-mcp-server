@@ -130,6 +130,22 @@ For guided tours, explanations and questions to the user:
   or type in the bubble: the policy always blocks it.
 - One bubble at a time; a new one replaces the previous one.
 
+### Messages from the user (envelope button)
+
+An always-on envelope button (bottom-right by default; the user can drag it)
+opens a window where the user writes to you at any moment, even in the middle
+of a tour.
+
+- Each message is put **at the top of your next desktop tool result**, under
+  `MESSAGE FROM THE USER`. Stop, read it, and answer or adapt before going on.
+- `messages(wait=N)` returns the unread messages, waiting up to N s for one.
+  Use it when you have nothing to do but wait for the user.
+- Every message is also appended to `inbox.jsonl` in the data dir
+  (`%LOCALAPPDATA%\desktop-mcp`). Between turns you can watch that file to
+  be woken up when the user writes.
+- You cannot read the draft or press "Send": only the user's physical click
+  or Enter counts.
+
 ## 6. Stopping, safety and limits
 
 - The user stops you with the on-screen **Stop** button, the hotkey

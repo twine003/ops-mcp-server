@@ -876,6 +876,8 @@ def main():
     _start_self_watchdog(Config.PORT)
 
     # Run with Streamable HTTP transport
+    if desktop_srv:
+        desktop_srv.start_message_button()
     mcp.run(
         transport="streamable-http",
         host=Config.HOST,

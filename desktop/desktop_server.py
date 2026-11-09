@@ -66,6 +66,7 @@ from desktop import windows as wins  # noqa: E402
 from desktop.monitors import (CaptureFrame, Monitor, enumerate_monitors, monitor_at,  # noqa: E402
                               monitor_for_rect, nearest_monitor, resolve_monitor, virtual_bounds)
 from desktop.callout import CalloutUI  # noqa: E402
+from desktop.inbox import Inbox, format_for_agent  # noqa: E402
 from desktop.overlay import Overlay  # noqa: E402
 from desktop.recorder import Recorder  # noqa: E402
 from desktop.safety import (DATA_DIR, AuditLog, Policy, PolicyError, StoppedError,  # noqa: E402
@@ -156,6 +157,17 @@ def _on_monitors_changed():
 OVERLAY = Overlay(CFG, STOP, on_monitors_changed=_on_monitors_changed)
 STOP.on_change(lambda paused, reason: OVERLAY.post("paused", paused=paused, reason=reason))
 CALLOUTS = CalloutUI(CFG)
+INBOX = Inbox(DATA_DIR / "inbox.jsonl")
+
+
+def start_message_button() -> None:
+    """Always-on "write to Claude" button (config message_button.enabled, default true)."""
+    if not CFG.get("message_button", {}).get("enabled", True):
+        return
+    try:
+        CALLOUTS.start_dock(INBOX, DATA_DIR)
+    except Exception:  # noqa: BLE001
+        logger.exception("message button failed to start")
 
 FRAMES: "OrderedDict[int, CaptureFrame]" = OrderedDict()
 _frame_counter = [0]
@@ -998,6 +1010,9 @@ BEFORE the first desktop action, call usage_guide() and follow it. Key rules:
 - Act by element id (ui_tree / find_element) or by point; pass window/element to key
   and type_text.
 - Explain or ask on screen with callout(). If a tool says you are paused, stop and ask.
+- The user can write to you at any time with the on-screen envelope button: such messages
+  arrive at the top of your next desktop tool result ("MESSAGE FROM THE USER") or through
+  messages(wait=N). Read them and act on them before going on.
 """
 
 mcp = FastMCP("desktop-mcp", instructions=INSTRUCTIONS,
@@ -1033,10 +1048,31 @@ class PresenceMiddleware(Middleware):
 
         beat = asyncio.create_task(_beat())
         try:
-            return await call_next(context)
+            result = await call_next(context)
         finally:
             beat.cancel()
             OVERLAY.keep_alive()
+        # messages the user typed in the "write to Claude" window ride on the next tool result
+        if context.message.name != "messages" and INBOX.count():
+            try:
+                _attach_messages(result, INBOX.take())
+            except Exception:  # noqa: BLE001
+                logger.exception("could not attach user messages")
+        return result
+
+
+def _attach_messages(result, msgs: list[dict]) -> None:
+    if not msgs:
+        return
+    from mcp.types import TextContent
+    text = format_for_agent(msgs)
+    content = getattr(result, "content", None)
+    if isinstance(content, list):
+        content.insert(0, TextContent(type="text", text=text))
+    sc = getattr(result, "structured_content", None)
+    if isinstance(sc, dict):
+        sc["user_messages"] = msgs
+    AUDIT.write({"tool": "messages_delivered", "n": len(msgs), "via": "tool_result"})
 
 
 mcp.add_middleware(PresenceMiddleware())
@@ -1333,9 +1369,14 @@ async def screen_border(action: str = "show", monitor: str | None = None, color:
     return {"ok": True, "overlay": OVERLAY.snapshot(), "border": CFG.get("border")}
 
 
+# MCP clients abort a call that stays silent too long (Claude Code: 300 s). Blocking waits stop
+# before that and answer "pending"; the agent then calls callout_wait / messages again.
+MAX_BLOCK_S = 240
+
+
 def _callout_wait(c, timeout: float) -> dict:
     """Block until the user accepts / answers / closes the bubble, the stop control fires, or timeout."""
-    end = time.monotonic() + max(0.0, float(timeout))
+    end = time.monotonic() + min(max(0.0, float(timeout)), MAX_BLOCK_S)
     while not c.done.wait(0.2):
         if STOP.stopped:
             c.finish("stopped")
@@ -1363,7 +1404,8 @@ async def callout(text: str, title: str = "", x: int | None = None, y: int | Non
     No anchor = centre of the primary monitor.
     ask=True adds a text field: the user types the answer and presses Enter or the button.
     step: small progress tag such as "2/5". One bubble at a time (a new one replaces the old one).
-    wait=True blocks until the user acts or `timeout` s pass, and returns
+    wait=True blocks until the user acts or `timeout` s pass (at most 240 s per call, so the client
+    does not abort it; still pending -> callout_wait(id)), and returns
       state: accepted | answered (+answer) | dismissed (the X / Esc) | replaced | stopped | pending.
     Only the user's PHYSICAL click / keys count; Claude can neither click nor read the bubble.
     """
@@ -1416,6 +1458,19 @@ async def callout_close(id: int | None = None) -> dict:
 
 
 @mcp.tool()
+async def messages(wait: float = 0) -> dict:
+    """Messages the user sent you with the on-screen "write to Claude" button (always visible,
+    bottom-right by default). They are also attached automatically to the result of your next
+    desktop tool call, so you rarely need this. wait=N blocks up to N s (max 240) until one arrives
+    (use it when you are waiting for the user to tell you something). Returns and marks read
+    every unread message. Journal: inbox.jsonl in the data dir (an idle agent can watch it)."""
+    msgs = await asyncio.to_thread(INBOX.wait, min(max(0.0, float(wait)), MAX_BLOCK_S)) if wait else INBOX.take()
+    if msgs:
+        AUDIT.write({"tool": "messages_delivered", "n": len(msgs), "via": "messages()"})
+    return {"ok": True, "messages": msgs, "journal": str(INBOX.path)}
+
+
+@mcp.tool()
 async def set_option(freeze_user_mouse: bool | None = None, persist: bool = False) -> dict:
     """Change runtime options. freeze_user_mouse: freeze the user's physical mouse during SendInput
     gestures (strokes/real clicks, 1-3 s) so it can't mix with Claude's. persist=True also writes it
@@ -1460,7 +1515,7 @@ async def status() -> dict:
                           "hotkey_error": GUARD.hotkey_error},
         "busy": bool(WORKER.busy_since), "busy_with": WORKER.current,
         "freeze_user_mouse_during_gestures": CFG.get("input", {}).get("freeze_user_mouse_during_gestures", False),
-        "overlay": OVERLAY.snapshot(), "callouts": CALLOUTS.snapshot(), "policy": POLICY.describe(),
+        "overlay": OVERLAY.snapshot(), "callouts": CALLOUTS.snapshot(), "unread_user_messages": INBOX.count(), "policy": POLICY.describe(),
         "capture_backend": WORKER.capturer.last_backend if WORKER.capturer else "",
         "audit_log": str(AUDIT.path), "recent_actions": AUDIT.tail(8),
         "dpi_awareness": DPI_MODE, "host": Config.HOST, "port": Config.PORT,
