@@ -48,6 +48,8 @@ Rules:
    and tell them; do not keep working blind.
 5. To **explain or ask** something on screen, use `callout` (section 5), not
    only text in the chat.
+6. If a tool result starts with `MESSAGE FROM THE USER`, stop and deal with
+   it before going on (section 6).
 
 ## 2. Install and check
 
@@ -130,7 +132,7 @@ For guided tours, explanations and questions to the user:
   or type in the bubble: the policy always blocks it.
 - One bubble at a time; a new one replaces the previous one.
 
-### Messages from the user (envelope button)
+## 6. Messages from the user (envelope button)
 
 An always-on envelope button (bottom-right by default; the user can drag it)
 opens a window where the user writes to you at any moment, even in the middle
@@ -146,7 +148,7 @@ of a tour.
 - You cannot read the draft or press "Send": only the user's physical click
   or Enter counts.
 
-## 5b. Screen video (`record_start` / `record_stop`)
+## 7. Screen video (`record_start` / `record_stop`)
 
 For tutorials and demos (MP4, H.264):
 
@@ -167,7 +169,7 @@ For tutorials and demos (MP4, H.264):
 - Files go to `%LOCALAPPDATA%\desktop-mcp\grabaciones` unless `path` says
   otherwise. No audio.
 
-## 6. Stopping, safety and limits
+## 8. Stopping, safety and limits
 
 - The user stops you with the on-screen **Stop** button, the hotkey
   Ctrl+Alt+Shift+F12, `pause()` or a chat message. If a tool answers that you
