@@ -107,4 +107,5 @@ systemctl enable "$SERVICE" >/dev/null
 systemctl restart "$SERVICE"
 sleep 6
 systemctl --no-pager --lines=5 status "$SERVICE" || true
-curl -fsS "http://127.0.0.1:$PORT/health" && echo || echo "health check failed: journalctl -u $SERVICE"
+HEALTH_HOST="$HOST"; [[ "$HOST" == "0.0.0.0" ]] && HEALTH_HOST="127.0.0.1"
+curl -fsS "http://$HEALTH_HOST:$PORT/health" && echo || echo "health check failed: journalctl -u $SERVICE"
