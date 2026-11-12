@@ -27,9 +27,9 @@ import queue
 import threading
 import time
 
-from ._plat import w
+from ._plat import IS_LINUX, w
 from .monitors import enumerate_monitors, nearest_monitor
-from .safety import CALLOUT_TITLE
+from .safety import CALLOUT_TITLE, agent_name
 
 log = logging.getLogger("desktop-mcp.callout")
 
@@ -39,6 +39,84 @@ GA_ROOT = 2
 def _physical_event() -> bool:
     """True if the message being dispatched now came from real hardware, not from our SendInput."""
     return (w.user32.GetMessageExtraInfo() & 0xFFFFFFFF) != w.INJECT_MAGIC
+
+
+def _wrapper_id(top) -> int:
+    """Tk's toplevel wrapper (the X window the WM manages): the ancestor of winfo_id() whose
+    parent is the root, or the one carrying WM_STATE once the WM reparented it."""
+    from .x11 import xconn as xc
+    from .x11 import winapi as xw
+    cur = int(top.winfo_id())
+    root = int(xc.root().id)
+    for _ in range(8):
+        if xw._wm_state(cur) is not None:
+            return cur
+        parent = xc.win(cur).query_tree().parent
+        pid = int(parent.id) if parent else root
+        if pid == root:
+            return cur
+        cur = pid
+    return cur
+
+
+def _managed_borderless(top) -> None:
+    """X11: an override-redirect window never gets the keyboard from the window manager
+    (xfwm4 keeps the focus on itself). Re-map it as a MANAGED window without decorations
+    (_MOTIF_WM_HINTS) that stays above the others: same look, and the WM focuses it."""
+    try:
+        geo = top.geometry()
+        top.withdraw()
+        top.overrideredirect(False)
+        top.update_idletasks()
+        from .x11 import xconn as xc
+        from Xlib import Xatom
+        wid = _wrapper_id(top)
+        win = xc.win(wid)
+        hints = xc.atom("_MOTIF_WM_HINTS")
+        win.change_property(hints, hints, 32, [2, 0, 0, 0, 0])   # flags=decorations, decorations=none
+        win.change_property(xc.atom("_NET_WM_WINDOW_TYPE"), Xatom.ATOM, 32,
+                            [xc.atom("_NET_WM_WINDOW_TYPE_DIALOG")])
+        win.change_property(xc.atom("_NET_WM_STATE"), Xatom.ATOM, 32,
+                            [xc.atom("_NET_WM_STATE_ABOVE"), xc.atom("_NET_WM_STATE_SKIP_TASKBAR"),
+                             xc.atom("_NET_WM_STATE_SKIP_PAGER")])
+        xc.d().flush()
+        top.geometry(geo)
+        top.deiconify()
+        top.attributes("-topmost", True)
+        top.lift()
+        top.update_idletasks()
+
+        def again():  # Tk rewrites the WM hints on map: set "no decorations" once more after it
+            try:
+                win.change_property(hints, hints, 32, [2, 0, 0, 0, 0])
+                xc.d().flush()
+                top.geometry(geo)
+            except Exception:  # noqa: BLE001
+                pass
+        top.after(30, again)
+        top.after(200, again)
+    except Exception:  # noqa: BLE001
+        log.exception("could not turn the window into a managed one")
+
+
+def give_keyboard(top, entry) -> None:
+    """Put the keyboard in `entry`. On X11 our borderless (override-redirect) windows are
+    never focused by the window manager: ask the X server directly once the window is
+    really mapped, and again on every click in the field (the WM may take it back)."""
+    def go(_e=None):
+        try:
+            top.focus_force()
+            entry.focus_set()
+        except Exception:  # noqa: BLE001 - window closed meanwhile
+            pass
+    if IS_LINUX and top.overrideredirect():
+        _managed_borderless(top)
+    go()
+    if IS_LINUX:
+        top.after(60, go)
+        top.after(250, go)
+        entry.bind("<Button-1>", go, add="+")
+        top.bind("<Button-1>", go, add="+")
 
 
 def make_draggable(top, widgets) -> None:
@@ -226,7 +304,7 @@ class CalloutUI:
         head = tk.Frame(frame, bg=bg)
         head.pack(fill="x")
         drag_parts = [frame, head]
-        lbl = tk.Label(head, text=c.title or "Claude", fg=accent, bg=bg, font=f_title)
+        lbl = tk.Label(head, text=c.title or agent_name(self.cfg), fg=accent, bg=bg, font=f_title)
         lbl.pack(side="left")
         drag_parts.append(lbl)
         if c.step:
@@ -329,5 +407,4 @@ class CalloutUI:
         if dock is not None:
             dock.raise_button()
         if entry is not None:                   # a question: give the field the keyboard
-            top.focus_force()
-            entry.focus_set()
+            give_keyboard(top, entry)

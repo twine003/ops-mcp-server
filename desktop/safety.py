@@ -41,6 +41,13 @@ def _merge(base: dict, over: dict) -> dict:
     return out
 
 
+def agent_name(cfg: dict) -> str:
+    """Name shown on screen (label, stop button, ghost tag, bubbles, message window):
+    env DESKTOP_MCP_AGENT_NAME > config agent_name > "Claude". Another agent (Muse...) can drive
+    the same server, and the user must see WHO is acting."""
+    return (os.getenv("DESKTOP_MCP_AGENT_NAME") or str(cfg.get("agent_name") or "") or "Claude").strip()
+
+
 def load_config() -> dict:
     cfg = json.loads((PACKAGE_DIR / "config.json").read_text(encoding="utf-8"))
     user_file = DATA_DIR / "config.json"

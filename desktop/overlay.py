@@ -31,6 +31,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from ._plat import IS_LINUX, w
+from .safety import agent_name
 from .monitors import Monitor, border_width_physical, enumerate_monitors, interpolate
 
 log = logging.getLogger("desktop-mcp.overlay")
@@ -584,7 +585,7 @@ class Overlay:
             state_txt += f" ({reason or self.stop_state.reason})"
         bw = border_width_physical(int(bcfg.get("width_px", 16)), m, bcfg.get("width_mode", "physical"))
         if bcfg.get("label", True):
-            text = f"Claude  ·  {self.label_text or '—'}  ·  {state_txt}"
+            text = f"{agent_name(self.cfg)}  ·  {self.label_text or '—'}  ·  {state_txt}"
             if len(text) > 110:
                 text = text[:107] + "…"
             img = pill(text, m.scale, accent)
@@ -592,7 +593,8 @@ class Overlay:
             self.label_win._dirty = True
             self.label_win.pos = (m.rect[0] + bw + round(8 * m.scale), m.rect[1] + bw + round(6 * m.scale))
         if self.stop_win is not None:
-            btxt = "▶  Reanudar Claude" if self.state == "paused" else "■  Detener Claude"
+            who = agent_name(self.cfg)
+            btxt = f"▶  Reanudar {who}" if self.state == "paused" else f"■  Detener {who}"
             img = pill(btxt, m.scale * 1.1, accent, bold=True, bg=(150, 30, 20, 235) if self.state != "paused" else (40, 110, 40, 235), dot=False)
             self.stop_win.set_image(img)
             x = m.rect[0] + (m.width - img.width) // 2
@@ -610,7 +612,7 @@ class Overlay:
         gcfg = self.cfg.get("ghost", {})
         color = _hex(gcfg.get("color", "#FF8C00"))
         if ring > 0 or self.ghost_scale != scale:
-            self.ghost_win.set_image(ghost_image(scale, color, gcfg.get("label", "Claude"), ring))
+            self.ghost_win.set_image(ghost_image(scale, color, gcfg.get("label") or agent_name(self.cfg), ring))
             self.ghost_scale = scale if ring <= 0 else None
         self.ghost_win.update(pos=(self.ghost_pos[0] - GHOST_HOTSPOT, self.ghost_pos[1] - GHOST_HOTSPOT), alpha=1.0)
 

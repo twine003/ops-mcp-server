@@ -1,5 +1,7 @@
 {
   "_comment": "Defaults. Do NOT edit here for local tweaks: put overrides in %LOCALAPPDATA%\\desktop-mcp\\config.json (same keys, merged over these). No secrets in this file: the API key comes from the DESKTOP_MCP_API_KEY environment variable.",
+  "agent_name": "Claude",
+  "_agent_name_comment": "Name shown on the label, the stop button, the ghost tag, the bubbles and the message window. Env DESKTOP_MCP_AGENT_NAME wins over it.",
   "host": "127.0.0.1",
   "port": 8011,
 
@@ -38,7 +40,7 @@
   "ghost": {
     "enabled": true,
     "color": "#FF8C00",
-    "label": "Claude",
+    "label": "",
     "anim_ms": 220,
     "highlight_ms": 1400,
     "trail": false,

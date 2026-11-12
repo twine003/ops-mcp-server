@@ -26,21 +26,21 @@ from datetime import datetime
 from pathlib import Path
 
 from ._plat import w
-from .callout import make_draggable
+from .callout import give_keyboard, make_draggable
 from .monitors import enumerate_monitors, nearest_monitor
-from .safety import CALLOUT_TITLE
+from .safety import CALLOUT_TITLE, agent_name
 
 log = logging.getLogger("desktop-mcp.inbox")
 
 GA_ROOT = 2
 
 DEFAULT_LABELS = {
-    "tooltip": "Write to Claude",
-    "title": "Message for Claude",
+    "tooltip": "Write to {agent}",
+    "title": "Message for {agent}",
     "hint": "Enter = send · Shift+Enter = new line",
     "send": "Send",
-    "sent": "Sent ✓  Claude will read it at its next step.",
-    "pending": "{n} message(s) not read yet by Claude",
+    "sent": "Sent ✓  {agent} will read it at its next step.",
+    "pending": "{n} message(s) not read yet by {agent}",
 }
 
 
@@ -121,7 +121,9 @@ class MessageDock:
     def __init__(self, ui, inbox: Inbox, cfg: dict, data_dir: Path):
         self.ui, self.inbox, self.cfg = ui, inbox, cfg
         self.mcfg = cfg.get("message_button", {})
-        self.labels = {**DEFAULT_LABELS, **(self.mcfg.get("labels") or {})}
+        who = agent_name(cfg)
+        self.labels = {k: v.replace("{agent}", who)
+                       for k, v in {**DEFAULT_LABELS, **(self.mcfg.get("labels") or {})}.items()}
         self.pos_file = Path(data_dir) / "message_button.json"
         self.btn = None
         self.btn_hwnd = 0
@@ -302,8 +304,7 @@ class MessageDock:
             try:
                 self.compose.deiconify()
                 self.compose.lift()
-                self.compose.focus_force()
-                self.entry.focus_set()
+                give_keyboard(self.compose, self.entry)
                 return
             except Exception:  # noqa: BLE001
                 self.compose = None
@@ -390,5 +391,4 @@ class MessageDock:
         top.deiconify()
         self._setup_hwnd(top, f"{CALLOUT_TITLE} message")
         self.raise_button()
-        top.focus_force()
-        entry.focus_set()
+        give_keyboard(top, entry)
