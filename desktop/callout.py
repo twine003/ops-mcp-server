@@ -27,7 +27,7 @@ import queue
 import threading
 import time
 
-from . import winapi as w
+from ._plat import w
 from .monitors import enumerate_monitors, nearest_monitor
 from .safety import CALLOUT_TITLE
 

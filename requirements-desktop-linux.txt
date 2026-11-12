@@ -1,0 +1,10 @@
+# Desktop / computer-use MCP server on Linux (X11). Installed by install_desktop_linux.sh
+# into /opt/desktop-mcp/venv (created with --system-site-packages: python3-gi for AT-SPI and
+# python3-tk come from the distribution, see the script).
+fastmcp>=2.0.0,<3
+python-dotenv>=1.0.0
+python-xlib>=0.33        # X11: windows (EWMH), XTEST input, SHAPE overlay, RandR monitors
+mss>=10.0
+Pillow>=10.0
+numpy>=1.26
+imageio-ffmpeg>=0.5      # ffmpeg (libx264) for record_start: screen video

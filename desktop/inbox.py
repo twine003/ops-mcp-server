@@ -25,7 +25,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import winapi as w
+from ._plat import w
 from .callout import make_draggable
 from .monitors import enumerate_monitors, nearest_monitor
 from .safety import CALLOUT_TITLE

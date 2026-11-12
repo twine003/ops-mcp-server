@@ -15,7 +15,7 @@ import time
 import numpy as np
 from PIL import Image
 
-from . import winapi as w
+from ._plat import IS_LINUX, w
 from .monitors import CaptureFrame, Monitor
 
 log = logging.getLogger("desktop-mcp.capture")
@@ -70,7 +70,7 @@ class Capturer:
         self.cfg = cfg.get("capture", {})
         self.backend_pref = self.cfg.get("backend", "auto")
         self._cams: dict[str, object] = {}     # device name -> DXCamera
-        self._dx_ok = self.backend_pref in ("auto", "dxgi")
+        self._dx_ok = self.backend_pref in ("auto", "dxgi") and not IS_LINUX  # DXGI is Windows-only
         self._mss = None
         self._last: dict[str, np.ndarray] = {}  # diff baseline per target key
         self.last_backend = ""
@@ -93,7 +93,7 @@ class Capturer:
             except Exception:
                 pass
             self._mss = None
-        self._dx_ok = self.backend_pref in ("auto", "dxgi")
+        self._dx_ok = self.backend_pref in ("auto", "dxgi") and not IS_LINUX  # DXGI is Windows-only
 
     def _camera(self, device: str):
         if device in self._cams:
@@ -167,10 +167,12 @@ class Capturer:
                     raise
                 self.reset()
                 self._dx_ok = False  # stays on GDI until the next display change
-        self.last_backend = "gdi"
+        self.last_backend = "x11" if IS_LINUX else "gdi"
         return self._grab_rect_mss(rect)
 
     def grab_window_printwindow(self, hwnd: int) -> tuple[np.ndarray, tuple]:
+        if IS_LINUX:
+            raise RuntimeError("PrintWindow is Windows-only: on X11 the window is cropped from the screen")
         """PrintWindow(PW_RENDERFULLCONTENT): works even when the window is covered."""
         rect = w.RECT()
         w.user32.GetWindowRect(hwnd, ctypes.byref(rect))

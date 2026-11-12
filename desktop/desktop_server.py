@@ -43,7 +43,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(_PKG_DIR.parent))
     __package__ = "desktop"
 
-from desktop import winapi as w  # noqa: E402
+from desktop._plat import IS_LINUX, w  # noqa: E402  (x11 stand-in on Linux)
 
 DPI_MODE = w.set_dpi_awareness()
 
@@ -64,9 +64,14 @@ import numpy as np  # noqa: E402
 
 from desktop import capture as cap  # noqa: E402
 from desktop import screen_video as sv  # noqa: E402
-from desktop import inputs as inp  # noqa: E402
-from desktop import uia  # noqa: E402
-from desktop import windows as wins  # noqa: E402
+if IS_LINUX:
+    from desktop.x11 import inputs as inp  # noqa: E402  XTEST
+    from desktop.x11 import uia  # noqa: E402  AT-SPI
+    from desktop.x11 import windows as wins  # noqa: E402  EWMH
+else:
+    from desktop import inputs as inp  # noqa: E402
+    from desktop import uia  # noqa: E402
+    from desktop import windows as wins  # noqa: E402
 from desktop.monitors import (CaptureFrame, Monitor, enumerate_monitors, monitor_at,  # noqa: E402
                               monitor_for_rect, nearest_monitor, resolve_monitor, virtual_bounds)
 from desktop.callout import CalloutUI  # noqa: E402
@@ -92,6 +97,8 @@ def _user_env(name: str) -> str:
     v = os.getenv(name, "")
     if v:
         return v
+    if IS_LINUX:
+        return ""
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
@@ -130,8 +137,9 @@ class Worker:
         self.t.start()
 
     def _run(self):
-        import comtypes
-        comtypes.CoInitialize()
+        if not IS_LINUX:
+            import comtypes
+            comtypes.CoInitialize()
         self.capturer = cap.Capturer(CFG)
         while True:
             fn, args, kwargs, fut, name = self.q.get()
@@ -475,11 +483,14 @@ def _launch_app(name, args, monitor, maximize):
     t0 = time.perf_counter()
     _require_running()
     exe = os.path.basename(name).lower()
-    exe = exe if exe.endswith(".exe") else exe + ".exe"
+    if not IS_LINUX:
+        exe = exe if exe.endswith(".exe") else exe + ".exe"
     POLICY.check_write(exe)
     mons = _monitors()
     hwnd = wins.launch(name, args, mons, OWN_PID)
     time.sleep(0.4)
+    if IS_LINUX:
+        POLICY.check_write(w.process_name(w.window_pid(hwnd)), w.window_text(hwnd))
     final_rect = w.window_rect(hwnd)
     if monitor is not None and monitor != "":
         mon = resolve_monitor(mons, monitor, _active_monitor(mons))
@@ -488,9 +499,10 @@ def _launch_app(name, args, monitor, maximize):
         w.user32.ShowWindow(hwnd, w.SW_SHOWMAXIMIZED)
     tgt = _target_from_window(hwnd, _monitors())
     _announce(tgt, _center(final_rect), None)
-    _audit("launch_app", t0, tgt, app=name, mechanism="CreateProcess")
+    mech = "fork/exec" if IS_LINUX else "CreateProcess"
+    _audit("launch_app", t0, tgt, app=name, mechanism=mech)
     return {"ok": True, "hwnd": hwnd, "title": tgt["title"], "process": tgt["process"],
-            "monitor": tgt["monitor"].index, "rect": w.window_rect(hwnd), "mechanism": "CreateProcess",
+            "monitor": tgt["monitor"].index, "rect": w.window_rect(hwnd), "mechanism": mech,
             "cursor_moved": False}
 
 
@@ -660,8 +672,15 @@ def _sendinput_click(x, y, button, double):
     return g.report
 
 
+def _no_message_on_linux(mechanism):
+    if IS_LINUX and mechanism == "message":
+        raise ValueError("mechanism='message' (Win32 window messages) does not exist on Linux/X11: "
+                         "use 'auto' (AT-SPI first, then XTEST) or 'sendinput' (XTEST)")
+
+
 def _click(x, y, element, capture_id, button, double, mechanism):
     t0 = time.perf_counter()
+    _no_message_on_linux(mechanism)
     _require_running()
     mons = _monitors()
     report = {"cursor_moved": False}
@@ -727,6 +746,8 @@ def _focus_hwnd_of(root: int) -> int:
     """The control that has keyboard focus inside root's GUI thread - valid
     even when that window is in the background, so we can type into it
     without activating it."""
+    if IS_LINUX:
+        return 0  # X toolkits have no child HWNDs: typing goes through XTEST after focusing
     gti = w.GUITHREADINFO()
     gti.cbSize = ctypes.sizeof(gti)
     if w.user32.GetGUIThreadInfo(w.window_thread(root), ctypes.byref(gti)) and gti.hwndFocus:
@@ -746,6 +767,7 @@ def _focus_hwnd_of(root: int) -> int:
 
 def _type_text(text, element, window, mechanism):
     t0 = time.perf_counter()
+    _no_message_on_linux(mechanism)
     _require_running()
     mons = _monitors()
     edit = 0
@@ -819,6 +841,7 @@ def _type_text(text, element, window, mechanism):
 
 def _key(combo, window, element, mechanism):
     t0 = time.perf_counter()
+    _no_message_on_linux(mechanism)
     _require_running()
     mons = _monitors()
     edit = 0
@@ -836,7 +859,7 @@ def _key(combo, window, element, mechanism):
         edit = _focus_hwnd_of(tgt["hwnd"])
     _announce(tgt, _center(w.window_rect(edit)) if edit else _center(tgt["rect"]), None)
     report = {"cursor_moved": False}
-    if mechanism in ("auto", "message") and not mods and edit:
+    if mechanism in ("auto", "message") and not mods and edit and not IS_LINUX:
         inp.post_key(edit, combo)
         used = "Win32.WM_KEYDOWN/UP"
     else:
@@ -854,6 +877,7 @@ def _key(combo, window, element, mechanism):
 
 def _scroll(dy, dx, x, y, element, capture_id, mechanism):
     t0 = time.perf_counter()
+    _no_message_on_linux(mechanism)
     _require_running()
     mons = _monitors()
     used = None
@@ -878,7 +902,7 @@ def _scroll(dy, dx, x, y, element, capture_id, mechanism):
                 used = r["via"] if r else None
             except Exception:  # noqa: BLE001
                 used = None
-    if used is None and mechanism in ("auto", "message"):
+    if used is None and mechanism in ("auto", "message") and not IS_LINUX:
         child = inp.deepest_child_at(tgt["hwnd"], px, py)
         inp.post_wheel(child, px, py, int(dy), int(dx))
         used = "Win32.WM_MOUSEWHEEL"
@@ -1001,7 +1025,7 @@ GUIDE_PATH = _PKG_DIR / "AGENT_GUIDE.md"
 # prompt even while the tools are still deferred). Keep it short: the full rules are in
 # AGENT_GUIDE.md, returned by usage_guide().
 INSTRUCTIONS = """\
-Desktop control of the user's Windows session. The user WATCHES you work: the orange
+Desktop control of the user's session (Windows, or Linux/X11). The user WATCHES you work: the orange
 "Claude" ghost cursor and the monitor border are how they see where you are.
 BEFORE the first desktop action, call usage_guide() and follow it. Key rules:
 - Border and ghost cursor are mandatory: every tool call shows them and they fade by

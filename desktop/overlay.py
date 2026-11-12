@@ -30,7 +30,7 @@ import time
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from . import winapi as w
+from ._plat import IS_LINUX, w
 from .monitors import Monitor, border_width_physical, enumerate_monitors, interpolate
 
 log = logging.getLogger("desktop-mcp.overlay")
@@ -55,7 +55,10 @@ def _premul_bgra(rgba: np.ndarray) -> bytes:
 
 
 def _font(size: int, bold: bool = False):
-    for name in (("segoeuib.ttf", "arialbd.ttf") if bold else ("segoeui.ttf", "arial.ttf")):
+    names = (("segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf") if bold else
+             ("segoeui.ttf", "arial.ttf", "DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
+    for name in names:
         try:
             return ImageFont.truetype(name, size)
         except OSError:
@@ -311,6 +314,10 @@ class Overlay:
 
     # ============================================================ UI thread
     def _run(self):
+        if IS_LINUX:
+            from .x11.layered import run_loop
+            run_loop(self)  # same commands/timers/rendering, X11 windows (x11/layered.py)
+            return
         try:
             wc = w.WNDCLASSEXW()
             wc.cbSize = ctypes.sizeof(wc)
@@ -762,3 +769,8 @@ class Overlay:
                                       for side, win in self.strips.get(m.device, {}).items()}}
                 for m in self.monitors},
         }
+
+
+if IS_LINUX:
+    # Every Overlay method creates its windows through this module-level name.
+    from .x11.layered import LayeredWindow  # noqa: E402,F811

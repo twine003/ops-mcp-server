@@ -1,4 +1,4 @@
-# Desktop / computer-use MCP server (mcp_server/desktop) - Windows only.
+# Desktop / computer-use MCP server (mcp_server/desktop) - Windows. Linux: requirements-desktop-linux.txt
 # Installed into mcp_server/desktop/.venv by: install_service.ps1 -Desktop
 # Kept apart from requirements.txt so Linux / service installs never pull these.
 fastmcp>=2.0.0,<3

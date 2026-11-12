@@ -8,7 +8,9 @@
 
   "deny_processes": [
     "keepass.exe", "keepassxc.exe", "1password.exe", "bitwarden.exe", "lastpass.exe",
-    "dashlane.exe", "credentialuibroker.exe", "consent.exe", "lockapp.exe", "logonui.exe"
+    "dashlane.exe", "credentialuibroker.exe", "consent.exe", "lockapp.exe", "logonui.exe",
+    "keepassxc", "keepass2", "1password", "bitwarden", "seahorse", "pinentry-gtk-2", "pinentry-gnome3",
+    "polkit-gnome-authentication-agent-1", "xfce-polkit", "gcr-prompter"
   ],
   "deny_window_title_regex": ["(?i)mot de passe|password|contrase(n|ñ)a|banque|bank"],
   "_deny_comment": "Never controlled, even for reading, even if also in the allow list. Complete it with your own (e.g. a browser with a banking session).",

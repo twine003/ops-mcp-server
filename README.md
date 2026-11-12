@@ -293,6 +293,42 @@ by the safety policy, so the assistant can neither read nor click it.
   `%LOCALAPPDATA%\desktop-mcp\config.json` (same keys, merged). No secrets in
   either file.
 
+## Desktop computer-use server (Linux / X11)
+
+The same desktop tools (same 35 tool names, same arguments, same overlay, callouts,
+message button, video recording, policy and audit) run on a Linux desktop with an X11
+session (XFCE, MATE, LXQt, GNOME/KDE on Xorg). `desktop/_plat.py` picks the backend:
+`desktop/x11/` replaces the Win32 modules, everything else is shared.
+
+| Windows | Linux / X11 |
+|---|---|
+| UI Automation | AT-SPI 2 (`gi.repository.Atspi`): GTK, Qt (`QT_ACCESSIBILITY=1`), LibreOffice |
+| SendInput | XTEST (real cursor, put back afterwards); characters missing from the layout are typed through a temporarily remapped spare keycode |
+| Win32 messages (`mechanism="message"`) | not available: `auto` = AT-SPI, then XTEST |
+| Layered windows, excluded from capture | ARGB override-redirect windows (compositor) or shaped windows; always visible in captures and to RustDesk (like `remote_visible: true`) |
+| DXGI / GDI capture, PrintWindow | XGetImage (mss); window captures are crops of the screen |
+| `%LOCALAPPDATA%\desktop-mcp` | `~/.local/share/desktop-mcp` (config, audit, inbox, recordings) |
+
+### Install (as root, for a desktop user with an autologin X session)
+
+```bash
+sudo ./install_desktop_linux.sh --user escritorio [--display :0] [--port 8011] [--host 127.0.0.1]
+```
+
+It installs the system packages (`python3-tk python3-gi gir1.2-atspi-2.0 at-spi2-core
+libatk-adaptor`), copies the code to `/opt/desktop-mcp/app`, builds `/opt/desktop-mcp/venv`
+(`requirements-desktop-linux.txt`) and a systemd unit `desktop-mcp` that runs
+`desktop/serve.py` (desktop tools only, no shell) as that user on its display. The key
+lives in `/etc/desktop-mcp/desktop-mcp.env` (`DESKTOP_MCP_API_KEY=`, root only); without
+a key it only listens on loopback. Apps started before `at-spi2-core` was installed do
+not expose accessibility until restarted.
+
+```bash
+systemctl status desktop-mcp
+journalctl -u desktop-mcp -f
+systemctl restart desktop-mcp
+```
+
 ## License
 
 MIT

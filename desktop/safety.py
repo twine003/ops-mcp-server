@@ -5,13 +5,30 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 
 PACKAGE_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.path.expandvars(r"%LOCALAPPDATA%\desktop-mcp"))
+IS_LINUX = sys.platform.startswith("linux")
+if IS_LINUX:
+    # %LOCALAPPDATA% of the shared config = XDG data home on Linux (~/.local/share)
+    os.environ.setdefault("LOCALAPPDATA", os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"))
+
+
+def expand_path(p) -> str:
+    """os.path.expandvars that also understands %VAR% and backslashes on Linux (the config is shared).
+    Without it the first Linux port wrote its audit into a folder literally named '%LOCALAPPDATA%'."""
+    s = str(p)
+    if IS_LINUX:
+        s = re.sub(r"%([A-Za-z_][A-Za-z0-9_]*)%", lambda m: os.environ.get(m.group(1), m.group(0)), s)
+        s = os.path.expanduser(s.replace(chr(92), "/"))
+    return os.path.expandvars(s)
+
+
+DATA_DIR = Path(expand_path(r"%LOCALAPPDATA%\desktop-mcp"))
 
 
 def _merge(base: dict, over: dict) -> dict:
@@ -129,10 +146,10 @@ class AuditLog:
 
     def __init__(self, cfg: dict):
         a = cfg.get("audit", {})
-        self.path = Path(os.path.expandvars(a.get("path", str(DATA_DIR / "audit.jsonl"))))
+        self.path = Path(expand_path(a.get("path", str(DATA_DIR / "audit.jsonl"))))
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.thumbs = bool(a.get("thumbnails", False))
-        self.thumb_dir = Path(os.path.expandvars(a.get("thumbnail_dir", str(DATA_DIR / "audit_thumbs"))))
+        self.thumb_dir = Path(expand_path(a.get("thumbnail_dir", str(DATA_DIR / "audit_thumbs"))))
         self.thumb_max = int(a.get("thumbnail_max_px", 320))
         self._lock = threading.Lock()
 

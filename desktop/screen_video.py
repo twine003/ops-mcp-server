@@ -31,6 +31,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .safety import expand_path
+
 DEFAULTS = {
     "dir": r"%LOCALAPPDATA%\desktop-mcp\grabaciones",
     "default_fps": 30,
@@ -110,7 +112,7 @@ def resolve_output_path(path: str | None, out_dir: Path, now: datetime | None = 
     if not path:
         p = out_dir / f"grabacion_{now:%Y%m%d_%H%M%S}.mp4"
     else:
-        p = Path(os.path.expandvars(str(path)))
+        p = Path(expand_path(str(path)))
         if not p.is_absolute():
             name = _SAFE_NAME.sub("_", p.name).strip(" .") or f"grabacion_{now:%Y%m%d_%H%M%S}"
             p = out_dir / name
@@ -601,7 +603,7 @@ class ScreenVideo:
 
     @property
     def out_dir(self) -> Path:
-        return Path(os.path.expandvars(str(self.limits["dir"])))
+        return Path(expand_path(str(self.limits["dir"])))
 
     def active(self) -> list[Recording]:
         return [r for r in self.recs.values() if r.state in ("recording", "paused")]

@@ -184,3 +184,15 @@ For tutorials and demos (MP4, H.264):
   (`audit_tail(n)`).
 - Irreversible actions (send, delete, confirm, pay) still need the user's
   approval in the chat, as anywhere else.
+
+## On Linux (X11)
+
+`status()` -> `dpi_awareness` starts with `x11` when the server runs on Linux. Differences:
+- `ui_tree` / `find_element` / `invoke` / `set_value` / `select` / `read_value` use AT-SPI.
+  Types keep the UIA names (Button, Edit, MenuItem...); `cls` is the AT-SPI role. Apps that
+  expose nothing (some Electron/Java apps, terminals): work by point with `screenshot` + `click`.
+- `mechanism="message"` does not exist: use `auto` (AT-SPI, then XTEST) or `sendinput`.
+- `type_text` and `key` focus the window first (`_NET_ACTIVE_WINDOW`) and type with XTEST.
+- Window ids (`hwnd`) are X client window ids. Process names have no `.exe` (`mousepad`, `firefox`).
+- The overlay (border, ghost, bubbles) is always part of screenshots and of what a remote
+  viewer (RustDesk) sees: `claude_cursor` in screenshot meta is not drawn over it.

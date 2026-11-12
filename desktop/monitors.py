@@ -18,7 +18,7 @@ import ctypes
 import math
 from dataclasses import dataclass, asdict
 
-from . import winapi as w
+from ._plat import IS_LINUX, w
 
 
 @dataclass(frozen=True)
@@ -181,7 +181,24 @@ def densify_path(points: list[tuple], max_step: float = 6.0) -> list[tuple[int, 
 
 
 # ---------------------------------------------------------------- Win32
+def _enumerate_monitors_x11() -> list[Monitor]:
+    wa = w.work_area()
+    out = []
+    for m in w.monitor_list():
+        r = m["rect"]
+        work = r
+        if wa:  # _NET_WORKAREA spans every monitor: clip it to this one
+            work = (max(r[0], wa[0]), max(r[1], wa[1]), min(r[2], wa[2]), min(r[3], wa[3]))
+            if work[2] <= work[0] or work[3] <= work[1]:
+                work = r
+        out.append(Monitor(index=m["index"], device=m["device"], name=m["name"], rect=r, work=work,
+                           dpi=96, primary=m["primary"]))
+    return out
+
+
 def enumerate_monitors() -> list[Monitor]:
+    if IS_LINUX:
+        return _enumerate_monitors_x11()
     found: list[Monitor] = []
 
     @w.MONITORENUMPROC
